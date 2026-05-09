@@ -7,18 +7,17 @@ blueprint:
     de l'utilisation réelle (bulles/jets) et de l'état du chauffage.
 
     ### Fonctionnalités
-    - Durée de filtration adaptée à la température de l'eau
+    - Durée de filtration adaptée à la température de l'eau (3 paliers interpolés)
     - Recalcul à chaque début de cycle selon la température actuelle
     - Bonus de filtration après utilisation (bulles/jets)
-    - Répartition en N cycles configurables sur la journée
-    - Protection anti-débordement minuit (les cycles ne passent pas sur le lendemain)
+    - Répartition en N cycles sur une plage horaire configurable (ex: 8h→22h ou 22h→8h)
+    - Fonctionne en plage nocturne (ex: 22h→6h) sans coupure à minuit
+    - Reset des compteurs au démarrage du 1er cycle (pas à minuit)
     - Bouton STOP d'urgence (coupe tout immédiatement)
-    - Mode Éco (durée divisée par 2)
-    - Mode Forcé (pompe toujours active)
-    - Extinction complète après filtration (sauf si chauffage actif)
+    - Extinction complète entre chaque cycle et en fin de filtration
     - Notifications si chauffage encore actif en fin de filtration
-    - Notifications si perte de connexion WiFi en cours de cycle
-    - Sécurité snapshot pump_time (prise à minuit, au reset et au 1er allumage du jour)
+    - Notifications si perte de connexion WiFi
+    - Reprise automatique après reconnexion WiFi
 
     ### Entités à créer dans configuration.yaml
     Voir le fichier spa_configuration.yaml fourni avec ce blueprint.
@@ -128,14 +127,25 @@ blueprint:
       input:
         heure_debut:
           name: "Heure de début du 1er cycle"
-          description: "Le premier cycle démarre à cette heure. Les suivants sont répartis uniformément."
+          description: >
+            Premier cycle démarre à cette heure.
+            Pour une plage nocturne, mettez ex: 22:00:00 et heure de fin à 08:00:00.
           default: "08:00:00"
+          selector:
+            time:
+
+        heure_fin:
+          name: "Heure de fin de la plage de filtration"
+          description: >
+            Dernier cycle doit se terminer avant cette heure.
+            Si heure_fin < heure_debut, la plage est nocturne (ex: 22h→8h).
+          default: "22:00:00"
           selector:
             time:
 
         nb_cycles:
           name: "Nombre de cycles par jour"
-          description: "La durée totale sera répartie en ce nombre de cycles égaux"
+          description: "La durée totale sera répartie en ce nombre de cycles égaux sur la plage"
           default: 3
           selector:
             number:
@@ -162,7 +172,7 @@ blueprint:
 
         autoriser_extinction:
           name: "Éteindre le SPA après filtration"
-          description: "Si activé, le power du SPA est coupé quand la filtration est terminée (sauf si chauffage actif)"
+          description: "Si activé, le power du SPA est coupé entre les cycles et en fin de filtration (sauf si chauffage actif)"
           default: true
           selector:
             boolean:
@@ -309,7 +319,7 @@ blueprint:
       icon: mdi:database
       input:
         input_snapshot_pump_time:
-          name: "Snapshot pump_time début de journée"
+          name: "Snapshot pump_time début de session"
           description: "input_number.spa_snapshot_pump_time"
           selector:
             entity:
@@ -346,7 +356,7 @@ blueprint:
 
         input_palier_actuel:
           name: "Palier de température actuel (0/1/2)"
-          description: "input_number.spa_palier_actuel — 0=bas, 1=moyen, 2=haut"
+          description: "input_number.spa_palier_actuel"
           selector:
             entity:
               filter:
@@ -354,7 +364,7 @@ blueprint:
               multiple: false
 
         input_utilisation_minutes:
-          name: "Temps d'utilisation cumulé aujourd'hui (minutes)"
+          name: "Temps d'utilisation cumulé (minutes)"
           description: "input_number.spa_utilisation_minutes"
           selector:
             entity:
@@ -372,7 +382,7 @@ blueprint:
               multiple: false
 
         input_bool_bonus_applique:
-          name: "Bonus utilisation déjà appliqué aujourd'hui"
+          name: "Bonus utilisation déjà appliqué"
           description: "input_boolean.spa_bonus_applique"
           selector:
             entity:
@@ -381,7 +391,7 @@ blueprint:
               multiple: false
 
         input_bool_snapshot_fait:
-          name: "Snapshot pump_time déjà effectué aujourd'hui"
+          name: "Snapshot pump_time effectué"
           description: "input_boolean.spa_snapshot_fait"
           selector:
             entity:
@@ -391,7 +401,7 @@ blueprint:
 
         input_bool_stoppe:
           name: "Filtration suspendue (STOP d'urgence)"
-          description: "input_boolean.spa_stoppe — ON = filtration suspendue jusqu'au prochain reset ou minuit"
+          description: "input_boolean.spa_stoppe"
           selector:
             entity:
               filter:
@@ -409,7 +419,7 @@ blueprint:
 
         input_button_reset:
           name: "Bouton de reset manuel"
-          description: "input_button.spa_reset — relance le calcul et les cycles immédiatement"
+          description: "input_button.spa_reset"
           selector:
             entity:
               filter:
@@ -418,7 +428,7 @@ blueprint:
 
         input_button_stop:
           name: "Bouton STOP d'urgence"
-          description: "input_button.spa_stop — coupe immédiatement la pompe et le SPA"
+          description: "input_button.spa_stop"
           selector:
             entity:
               filter:
@@ -426,59 +436,80 @@ blueprint:
               multiple: false
 
 # ─────────────────────────────────────────────
-# MODE & VARIABLES
+# MODE
 # ─────────────────────────────────────────────
-mode: queued
-max: 10
+mode: single
 max_exceeded: silent
 
+# ─────────────────────────────────────────────
+# VARIABLES GLOBALES
+# ─────────────────────────────────────────────
 variables:
   # Entités SPA
-  v_power:              !input switch_power
-  v_pompe:              !input switch_pompe
-  v_chauffage_sw:       !input switch_chauffage
-  v_chauffage_bin:      !input binary_chauffage_actif
-  v_bulles:             !input switch_bulles
-  v_jets:               !input switch_jets
-  v_temp:               !input sensor_temperature
-  v_pump_time:          !input sensor_pump_time
-  v_connexion:          !input binary_connexion
+  v_power:           !input switch_power
+  v_pompe:           !input switch_pompe
+  v_chauffage_sw:    !input switch_chauffage
+  v_chauffage_bin:   !input binary_chauffage_actif
+  v_bulles:          !input switch_bulles
+  v_jets:            !input switch_jets
+  v_temp:            !input sensor_temperature
+  v_pump_time:       !input sensor_pump_time
+  v_connexion:       !input binary_connexion
 
   # Paramètres
-  v_nb_cycles:          !input nb_cycles
-  v_mode:               !input mode_filtration
-  v_autoriser_ext:      !input autoriser_extinction
+  v_nb_cycles:       !input nb_cycles
+  v_mode:            !input mode_filtration
+  v_autoriser_ext:   !input autoriser_extinction
+  v_heure_debut:     !input heure_debut
+  v_heure_fin:       !input heure_fin
 
   # Paliers
-  v_duree_bas:          !input duree_palier_bas
-  v_seuil_moyen:        !input seuil_temp_moyen
-  v_duree_moyen_min:    !input duree_palier_moyen_min
-  v_duree_moyen_max:    !input duree_palier_moyen_max
-  v_seuil_haut:         !input seuil_temp_haut
-  v_duree_haut_min:     !input duree_palier_haut_min
-  v_duree_haut_max:     !input duree_palier_haut_max
+  v_duree_bas:       !input duree_palier_bas
+  v_seuil_moyen:     !input seuil_temp_moyen
+  v_duree_moyen_min: !input duree_palier_moyen_min
+  v_duree_moyen_max: !input duree_palier_moyen_max
+  v_seuil_haut:      !input seuil_temp_haut
+  v_duree_haut_min:  !input duree_palier_haut_min
+  v_duree_haut_max:  !input duree_palier_haut_max
 
   # Bonus
-  v_seuil_util:         !input seuil_utilisation_court
-  v_bonus_court:        !input bonus_utilisation_court
-  v_bonus_long:         !input bonus_utilisation_long
+  v_seuil_util:      !input seuil_utilisation_court
+  v_bonus_court:     !input bonus_utilisation_court
+  v_bonus_long:      !input bonus_utilisation_long
 
   # Entités internes
-  v_snapshot:           !input input_snapshot_pump_time
-  v_objectif:           !input input_duree_objectif
-  v_bonus_min:          !input input_bonus_minutes
-  v_cycle_num:          !input input_cycle_en_cours
-  v_palier:             !input input_palier_actuel
-  v_util_min:           !input input_utilisation_minutes
-  v_bool_util:          !input input_bool_utilise
-  v_bool_bonus:         !input input_bool_bonus_applique
-  v_bool_snapshot:      !input input_bool_snapshot_fait
-  v_bool_stoppe:        !input input_bool_stoppe
-  v_dt_util:            !input input_datetime_derniere_utilisation
+  v_snapshot:        !input input_snapshot_pump_time
+  v_objectif:        !input input_duree_objectif
+  v_bonus_min:       !input input_bonus_minutes
+  v_cycle_num:       !input input_cycle_en_cours
+  v_palier:          !input input_palier_actuel
+  v_util_min:        !input input_utilisation_minutes
+  v_bool_util:       !input input_bool_utilise
+  v_bool_bonus:      !input input_bool_bonus_applique
+  v_bool_snapshot:   !input input_bool_snapshot_fait
+  v_bool_stoppe:     !input input_bool_stoppe
+  v_dt_util:         !input input_datetime_derniere_utilisation
 
-  # ── Calcul de la durée de base selon température actuelle ──
-  v_temp_val: "{{ states(v_temp) | float(20) }}"
+  # ── Plage horaire en minutes depuis minuit ──
+  # Calcule la durée totale de la plage (gère le cas nocturne heure_fin < heure_debut)
+  v_heure_debut_min: >-
+    {% set h = v_heure_debut.split(':') %}
+    {{ h[0] | int * 60 + h[1] | int }}
 
+  v_heure_fin_min: >-
+    {% set h = v_heure_fin.split(':') %}
+    {{ h[0] | int * 60 + h[1] | int }}
+
+  v_plage_minutes: >-
+    {% set debut = v_heure_debut_min | int %}
+    {% set fin   = v_heure_fin_min   | int %}
+    {% if fin > debut %}
+      {{ fin - debut }}
+    {% else %}
+      {{ (1440 - debut) + fin }}
+    {% endif %}
+
+  # ── Durée de base selon température ──
   v_duree_base: >-
     {% set t = states(v_temp) | float(20) %}
     {% set seuil_m = v_seuil_moyen | float(25) %}
@@ -506,8 +537,8 @@ variables:
     {{ (v_duree_ajustee | int) + (states(v_bonus_min) | float(0) | round(0) | int) }}
 
   v_minutes_filtrees: >-
-    {% set pump_now  = states(v_pump_time)  | float(0) %}
-    {% set pump_snap = states(v_snapshot)   | float(0) %}
+    {% set pump_now  = states(v_pump_time) | float(0) %}
+    {% set pump_snap = states(v_snapshot)  | float(0) %}
     {% set diff_min  = (pump_now - pump_snap) * 60 %}
     {% if diff_min < 0 or diff_min > 1440 %}0{% else %}{{ diff_min | round(0) | int }}{% endif %}
 
@@ -515,21 +546,10 @@ variables:
     {% set reste = (v_duree_totale | int) - (v_minutes_filtrees | int) %}
     {% if reste < 0 %}0{% else %}{{ reste | int }}{% endif %}
 
-  v_palier_detecte: >-
-    {% set t = states(v_temp) | float(20) %}
-    {% if t >= v_seuil_haut %}2
-    {% elif t >= v_seuil_moyen %}1
-    {% else %}0{% endif %}
-
 # ─────────────────────────────────────────────
 # TRIGGERS
 # ─────────────────────────────────────────────
 triggers:
-  # Reset journalier + snapshot à minuit
-  - trigger: time
-    at: "00:00:00"
-    id: "minuit"
-
   # Heure de démarrage du 1er cycle
   - trigger: time
     at: !input heure_debut
@@ -559,20 +579,20 @@ triggers:
     entity_id: !input input_button_stop
     id: "stop_urgence"
 
-  # Connexion perdue en cours de cycle
+  # Connexion perdue
   - trigger: state
     entity_id: !input binary_connexion
     to: "off"
     id: "connexion_perdue"
 
-  # Retour de connexion — vérifier si des cycles sont encore nécessaires
+  # Retour de connexion
   - trigger: state
     entity_id: !input binary_connexion
     from: "off"
     to: "on"
     id: "connexion_retablie"
 
-  # Power allumé manuellement — snapshot si première fois du jour
+  # Power allumé manuellement — snapshot si première fois de la session
   - trigger: state
     entity_id: !input switch_power
     to: "on"
@@ -590,24 +610,19 @@ actions:
 
   # ══════════════════════════════════════════
   # TRIGGER : STOP D'URGENCE
-  # Traité EN PREMIER pour réactivité maximale
   # ══════════════════════════════════════════
   - if:
       - condition: trigger
         id: "stop_urgence"
     then:
-      # Marquer comme suspendu — stoppe la boucle repeat au prochain cycle
       - action: input_boolean.turn_on
         target:
           entity_id: !input input_bool_stoppe
-      # Couper la pompe immédiatement
       - action: homeassistant.turn_off
         target:
           entity_id: !input switch_pompe
-      # Attendre que la pompe s'arrête
       - delay:
           seconds: 5
-      # Couper le power si chauffage inactif
       - if:
           - condition: state
             entity_id: !input binary_chauffage_actif
@@ -620,8 +635,8 @@ actions:
             data:
               title: "🛑 SPA — Filtration arrêtée"
               message: >-
-                La filtration a été arrêtée manuellement.
-                Le SPA est éteint. Appuyez sur Reset pour relancer la filtration.
+                La filtration a été arrêtée manuellement. Le SPA est éteint.
+                Appuyez sur Reset pour relancer la filtration.
         else:
           - action: notify.persistent_notification
             data:
@@ -630,46 +645,6 @@ actions:
                 La filtration a été arrêtée manuellement.
                 Le chauffage est encore actif : le power reste allumé.
                 Éteignez le chauffage pour couper complètement le SPA.
-
-  # ══════════════════════════════════════════
-  # TRIGGER : MINUIT — reset journalier
-  # ══════════════════════════════════════════
-  - if:
-      - condition: trigger
-        id: "minuit"
-    then:
-      - action: input_number.set_value
-        target:
-          entity_id: !input input_snapshot_pump_time
-        data:
-          value: "{{ states(v_pump_time) | float(0) }}"
-      - action: input_number.set_value
-        target:
-          entity_id: !input input_bonus_minutes
-        data:
-          value: 0
-      - action: input_number.set_value
-        target:
-          entity_id: !input input_utilisation_minutes
-        data:
-          value: 0
-      - action: input_number.set_value
-        target:
-          entity_id: !input input_cycle_en_cours
-        data:
-          value: 0
-      - action: input_boolean.turn_off
-        target:
-          entity_id: !input input_bool_utilise
-      - action: input_boolean.turn_off
-        target:
-          entity_id: !input input_bool_bonus_applique
-      - action: input_boolean.turn_off
-        target:
-          entity_id: !input input_bool_stoppe
-      - action: input_boolean.turn_on
-        target:
-          entity_id: !input input_bool_snapshot_fait
 
   # ══════════════════════════════════════════
   # TRIGGER : POWER ON — snapshot si pas encore fait
@@ -713,7 +688,6 @@ actions:
 
   # ══════════════════════════════════════════
   # TRIGGER : RETOUR DE CONNEXION
-  # Vérifie s'il reste des cycles à faire et les relance si nécessaire
   # ══════════════════════════════════════════
   - if:
       - condition: trigger
@@ -725,8 +699,6 @@ actions:
         state: "off"
     then:
       - variables:
-          # Recalcul complet au retour de connexion
-          temp_retour: "{{ states(v_temp) | float(20) }}"
           duree_base_retour: >-
             {% set t = states(v_temp) | float(20) %}
             {% set seuil_m = v_seuil_moyen | float(25) %}
@@ -754,11 +726,19 @@ actions:
           minutes_restantes_retour: >-
             {% set reste = (duree_totale_retour | int) - (minutes_filtrees_retour | int) %}
             {% if reste <= 0 %}0{% else %}{{ reste | int }}{% endif %}
-          # Heure actuelle en minutes depuis minuit
-          heure_actuelle_min: "{{ now().hour * 60 + now().minute }}"
-          # Il reste encore du temps dans la journée (avant 23h50) et des minutes à filtrer
+          # Calcul si on est encore dans la plage horaire
+          maintenant_min: "{{ now().hour * 60 + now().minute }}"
+          dans_plage: >-
+            {% set now_min  = now().hour * 60 + now().minute %}
+            {% set debut    = v_heure_debut_min | int %}
+            {% set fin      = v_heure_fin_min   | int %}
+            {% if fin > debut %}
+              {{ now_min >= debut and now_min < fin }}
+            {% else %}
+              {{ now_min >= debut or now_min < fin }}
+            {% endif %}
           peut_filtrer: >-
-            {{ (minutes_restantes_retour | int) > 0 and (heure_actuelle_min | int) < (23 * 60 + 50) }}
+            {{ (minutes_restantes_retour | int) > 0 and dans_plage }}
 
       - if:
           - condition: template
@@ -768,10 +748,9 @@ actions:
             data:
               title: "🔄 SPA — Connexion rétablie, filtration relancée"
               message: >-
-                La connexion WiFi est rétablie.
+                Connexion WiFi rétablie.
                 Il reste {{ minutes_restantes_retour }} min à filtrer.
                 Un cycle de rattrapage démarre maintenant.
-          # Lancer un cycle de rattrapage unique avec le temps restant
           - action: homeassistant.turn_on
             target:
               entity_id: !input switch_power
@@ -804,12 +783,13 @@ actions:
             data:
               title: "✅ SPA — Connexion rétablie"
               message: >-
-                La connexion WiFi est rétablie.
-                L'objectif de filtration est déjà atteint ou il est trop tard
-                dans la journée pour lancer un nouveau cycle.
+                Connexion WiFi rétablie.
+                L'objectif de filtration est atteint ou la plage horaire est dépassée.
 
   # ══════════════════════════════════════════
-  # TRIGGER : FIN BULLES ou JETS — calcul bonus utilisation
+  # TRIGGER : FIN BULLES ou JETS
+  # Enregistre l'utilisation et le bonus
+  # Le bonus sera intégré au prochain recalcul de cycle
   # ══════════════════════════════════════════
   - if:
       - or:
@@ -819,7 +799,6 @@ actions:
             id: "fin_jets"
       - condition: template
         value_template: "{{ v_mode not in ['Forcé', 'Inactif'] }}"
-      # Ne pas traiter si filtration suspendue par STOP
       - condition: state
         entity_id: !input input_bool_stoppe
         state: "off"
@@ -870,51 +849,13 @@ actions:
             target:
               entity_id: !input input_bool_bonus_applique
 
-          # Si la pompe est arrêtée, lancer un cycle bonus immédiat
-          - if:
-              - condition: state
-                entity_id: !input switch_pompe
-                state: "off"
-            then:
-              - action: homeassistant.turn_on
-                target:
-                  entity_id: !input switch_power
-              - delay:
-                  seconds: 3
-              - action: homeassistant.turn_on
-                target:
-                  entity_id: !input switch_pompe
-              - delay:
-                  minutes: "{{ bonus_a_appliquer | int }}"
-              - action: homeassistant.turn_off
-                target:
-                  entity_id: !input switch_pompe
-              - if:
-                  - condition: state
-                    entity_id: !input binary_chauffage_actif
-                    state: "off"
-                then:
-                  - if:
-                      - condition: template
-                        value_template: "{{ v_autoriser_ext }}"
-                    then:
-                      - delay:
-                          seconds: 5
-                      - action: homeassistant.turn_off
-                        target:
-                          entity_id: !input switch_power
-                    else:
-                      - action: homeassistant.turn_off
-                        target:
-                          entity_id: !input switch_pompe
-                else:
-                  - action: notify.persistent_notification
-                    data:
-                      title: "♨️ SPA — Chauffage encore actif"
-                      message: >-
-                        Le cycle bonus de filtration est terminé mais le chauffage
-                        est encore actif. Le SPA reste allumé.
-                        Éteignez le chauffage manuellement pour couper le SPA.
+          - action: notify.persistent_notification
+            data:
+              title: "🏊 SPA — Bonus filtration enregistré"
+              message: >-
+                Utilisation détectée ({{ session_minutes }} min).
+                Bonus de {{ bonus_a_appliquer }} min ajouté à l'objectif.
+                Il sera pris en compte au prochain cycle.
 
   # ══════════════════════════════════════════
   # TRIGGER : RESET MANUEL
@@ -923,16 +864,7 @@ actions:
       - condition: trigger
         id: "reset_manuel"
     then:
-      # Snapshot pump_time au moment du reset (référence "début de journée")
-      - action: input_number.set_value
-        target:
-          entity_id: !input input_snapshot_pump_time
-        data:
-          value: "{{ states(v_pump_time) | float(0) }}"
-      - action: input_boolean.turn_on
-        target:
-          entity_id: !input input_bool_snapshot_fait
-      # Reset des compteurs et flags
+      # Reset complet — le snapshot sera pris au démarrage de la boucle
       - action: input_number.set_value
         target:
           entity_id: !input input_bonus_minutes
@@ -954,7 +886,9 @@ actions:
       - action: input_boolean.turn_off
         target:
           entity_id: !input input_bool_bonus_applique
-      # Lever la suspension STOP si elle était active
+      - action: input_boolean.turn_off
+        target:
+          entity_id: !input input_bool_snapshot_fait
       - action: input_boolean.turn_off
         target:
           entity_id: !input input_bool_stoppe
@@ -969,7 +903,6 @@ actions:
             id: "debut_cycle"
           - condition: trigger
             id: "reset_manuel"
-      # Ne pas démarrer si STOP d'urgence actif
       - condition: state
         entity_id: !input input_bool_stoppe
         state: "off"
@@ -1007,7 +940,7 @@ actions:
               - "{{ v_mode in ['Automatique', 'Éco'] }}"
             sequence:
 
-              # Vérification connexion avant de commencer
+              # Vérification connexion
               - if:
                   - condition: state
                     entity_id: !input binary_connexion
@@ -1019,7 +952,19 @@ actions:
                       message: "Le SPA est hors connexion. Vérifiez l'ESP8266."
                   - stop: "SPA hors connexion"
 
-              # Reset compteur de cycles
+              # ── SNAPSHOT au démarrage de la session ──
+              # Pris ici pour avoir une référence propre
+              # quelque soit l'heure de début (jour ou nuit)
+              - action: input_number.set_value
+                target:
+                  entity_id: !input input_snapshot_pump_time
+                data:
+                  value: "{{ states(v_pump_time) | float(0) }}"
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: !input input_bool_snapshot_fait
+
+              # Reset du compteur de cycles
               - action: input_number.set_value
                 target:
                   entity_id: !input input_cycle_en_cours
@@ -1031,7 +976,7 @@ actions:
                   count: "{{ v_nb_cycles | int }}"
                   sequence:
 
-                    # ── VÉRIFICATION STOP avant chaque cycle ──
+                    # Vérification STOP
                     - if:
                         - condition: state
                           entity_id: !input input_bool_stoppe
@@ -1039,7 +984,7 @@ actions:
                       then:
                         - stop: "Filtration suspendue par STOP d'urgence"
 
-                    # ── VÉRIFICATION CONNEXION ──
+                    # Vérification connexion
                     - if:
                         - condition: state
                           entity_id: !input binary_connexion
@@ -1050,14 +995,12 @@ actions:
                             title: "🚨 SPA — Connexion perdue"
                             message: >-
                               Connexion perdue au démarrage du cycle
-                              {{ repeat.index }} / {{ v_nb_cycles }}.
-                              Cycle ignoré.
+                              {{ repeat.index }} / {{ v_nb_cycles }}. Cycle ignoré.
                         - stop: "Connexion perdue en début de cycle"
 
-                    # ── Recalcul durée au début de chaque cycle ──
+                    # ── Recalcul au début de chaque cycle ──
                     - variables:
-                        temp_actuelle: "{{ states(v_temp) | float(20) }}"
-
+                        # Température et durée de base recalculées
                         duree_base_cycle: >-
                           {% set t = states(v_temp) | float(20) %}
                           {% set seuil_m = v_seuil_moyen | float(25) %}
@@ -1079,9 +1022,11 @@ actions:
                             {{ duree_base_cycle | int }}
                           {% endif %}
 
+                        # Durée totale incluant le bonus
                         duree_totale_cycle: >-
                           {{ (duree_ajustee_cycle | int) + (states(v_bonus_min) | float(0) | round(0) | int) }}
 
+                        # Minutes filtrées depuis le snapshot de début de session
                         minutes_filtrees_cycle: >-
                           {% set pump_now  = states(v_pump_time) | float(0) %}
                           {% set pump_snap = states(v_snapshot)  | float(0) %}
@@ -1102,21 +1047,42 @@ actions:
                             {{ (minutes_restantes_cycle / cycles_restants) | round(0) | int }}
                           {% endif %}
 
+                        # Intervalle basé sur la plage horaire configurable
+                        # plage_minutes = heure_fin - heure_debut (géré nocturne)
                         intervalle_entre_cycles: >-
-                          {% set pause = ((1440 - duree_totale_cycle | int) / (v_nb_cycles | int)) | round(0) | int %}
+                          {% set debut = v_heure_debut_min | int %}
+                          {% set fin   = v_heure_fin_min   | int %}
+                          {% if fin > debut %}
+                            {% set plage = fin - debut %}
+                          {% else %}
+                            {% set plage = (1440 - debut) + fin %}
+                          {% endif %}
+                          {% set pause = ((plage - duree_totale_cycle | int) / (v_nb_cycles | int)) | round(0) | int %}
                           {% if pause < 5 %}5{% else %}{{ pause }}{% endif %}
 
-                        # ── PROTECTION ANTI-DÉBORDEMENT MINUIT ──
-                        # Calcule l'heure de fin de ce cycle
-                        # Si elle dépasse 23h50, on annule pour ne pas mordre sur demain
-                        heure_fin_cycle_minutes: >-
-                          {% set h = now().hour %}
-                          {% set m = now().minute %}
-                          {% set maintenant_min = h * 60 + m %}
-                          {{ maintenant_min + (duree_ce_cycle | int) }}
+                        # Protection dépassement heure_fin
+                        # Calcule si heure actuelle + durée cycle dépasse heure_fin
+                        heure_fin_cycle_min: >-
+                          {{ now().hour * 60 + now().minute + (duree_ce_cycle | int) }}
 
-                        depasse_minuit: >-
-                          {{ (heure_fin_cycle_minutes | int) > (23 * 60 + 50) }}
+                        depasse_heure_fin: >-
+                          {% set fin_cycle = now().hour * 60 + now().minute + (duree_ce_cycle | int) %}
+                          {% set debut     = v_heure_debut_min | int %}
+                          {% set fin       = v_heure_fin_min   | int %}
+                          {% if fin > debut %}
+                            {# Plage diurne : on dépasse si fin_cycle > fin #}
+                            {{ fin_cycle > fin }}
+                          {% else %}
+                            {# Plage nocturne : on dépasse si on sort de la plage #}
+                            {% set now_min = now().hour * 60 + now().minute %}
+                            {% if now_min >= debut %}
+                              {# Côté nuit : on dépasse si fin_cycle > 1440 + fin #}
+                              {{ fin_cycle > 1440 + fin }}
+                            {% else %}
+                              {# Côté matin : on dépasse si fin_cycle > fin #}
+                              {{ fin_cycle > fin }}
+                            {% endif %}
+                          {% endif %}
 
                     # Mise à jour durée objectif
                     - action: input_number.set_value
@@ -1125,22 +1091,21 @@ actions:
                       data:
                         value: "{{ duree_totale_cycle | int }}"
 
-                    # ── Si débordement minuit détecté, on arrête proprement ──
+                    # ── Dépassement heure de fin ──
                     - if:
                         - condition: template
-                          value_template: "{{ depasse_minuit }}"
+                          value_template: "{{ depasse_heure_fin }}"
                       then:
                         - action: notify.persistent_notification
                           data:
-                            title: "🌙 SPA — Cycle reporté à demain"
+                            title: "🕙 SPA — Cycle reporté"
                             message: >-
-                              Le cycle {{ repeat.index }} / {{ v_nb_cycles }} aurait dépassé minuit.
-                              Il est annulé pour ne pas perturber le calcul de demain.
-                              La filtration reprendra normalement demain à l'heure configurée.
-                        - stop: "Cycle annulé — débordement minuit"
+                              Le cycle {{ repeat.index }} / {{ v_nb_cycles }} dépasserait
+                              l'heure de fin configurée. Il est annulé.
+                              La filtration reprendra à la prochaine session.
+                        - stop: "Cycle annulé — dépassement heure de fin"
 
-                    # ── Si rien à filtrer : objectif atteint ──
-                    # Couper pompe + power si actifs, et stopper la boucle
+                    # ── Objectif atteint ──
                     - if:
                         - condition: template
                           value_template: "{{ duree_ce_cycle | int <= 0 }}"
@@ -1149,11 +1114,10 @@ actions:
                           data:
                             title: "✅ SPA — Filtration terminée"
                             message: >-
-                              L'objectif de filtration journalier est atteint
-                              ({{ minutes_filtrees_cycle }} min filtrées /
-                              {{ duree_totale_cycle }} min objectif).
+                              Objectif atteint
+                              ({{ minutes_filtrees_cycle }} min / {{ duree_totale_cycle }} min).
                               Cycles restants annulés.
-                        # Couper la pompe si elle tourne encore (allumée manuellement)
+                        # Couper pompe si elle tourne encore
                         - if:
                             - condition: state
                               entity_id: !input switch_pompe
@@ -1164,7 +1128,7 @@ actions:
                                 entity_id: !input switch_pompe
                             - delay:
                                 seconds: 5
-                        # Couper le power si chauffage inactif
+                        # Couper power si chauffage inactif
                         - if:
                             - condition: state
                               entity_id: !input binary_chauffage_actif
@@ -1185,6 +1149,7 @@ actions:
                                   Filtration terminée mais le chauffage est actif.
                                   Le SPA reste allumé jusqu'à l'arrêt du chauffage.
                         - stop: "Objectif atteint — cycles restants annulés"
+
                       else:
 
                         # ── Démarrage du cycle ──
@@ -1197,11 +1162,11 @@ actions:
                           target:
                             entity_id: !input switch_pompe
 
-                        # Attente de la durée du cycle
+                        # Filtration pendant la durée du cycle
                         - delay:
                             minutes: "{{ duree_ce_cycle | int }}"
 
-                        # ── Fin du cycle : arrêt pompe ──
+                        # Arrêt pompe
                         - action: homeassistant.turn_off
                           target:
                             entity_id: !input switch_pompe
@@ -1213,7 +1178,7 @@ actions:
                           data:
                             value: "{{ repeat.index | int }}"
 
-                        # ── Dernier cycle : extinction ou notification ──
+                        # ── Dernier cycle ──
                         - if:
                             - condition: template
                               value_template: "{{ repeat.index == v_nb_cycles | int }}"
@@ -1227,8 +1192,7 @@ actions:
                                   data:
                                     title: "♨️ SPA — Filtration terminée, chauffage actif"
                                     message: >-
-                                      La filtration journalière est terminée
-                                      ({{ duree_totale_cycle }} min).
+                                      Filtration journalière terminée ({{ duree_totale_cycle }} min).
                                       Le chauffage est encore actif : le SPA reste allumé.
                                       Éteignez le chauffage manuellement pour couper le SPA.
                               else:
@@ -1241,8 +1205,23 @@ actions:
                                     - action: homeassistant.turn_off
                                       target:
                                         entity_id: !input switch_power
+
                           else:
-                            # Pause entre les cycles (si pas dernier cycle)
-                            # Vérification STOP pendant l'intervalle
+                            # ── Entre les cycles : power OFF + pause ──
+                            - if:
+                                - condition: state
+                                  entity_id: !input binary_chauffage_actif
+                                  state: "off"
+                              then:
+                                - if:
+                                    - condition: template
+                                      value_template: "{{ v_autoriser_ext }}"
+                                  then:
+                                    - delay:
+                                        seconds: 5
+                                    - action: homeassistant.turn_off
+                                      target:
+                                        entity_id: !input switch_power
+                            # Pause avant le prochain cycle
                             - delay:
                                 minutes: "{{ intervalle_entre_cycles | int }}"
