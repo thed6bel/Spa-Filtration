@@ -926,7 +926,7 @@ actions:
                             # Cycle bonus si bulles ont été utilisées et temps restant > 0
                             - if:
                                 - condition: template
-                                  value_template: "{{ bonus_restant | int > 0 and not skip_coupure }}"
+                                  value_template: "{{ bonus_final | int > 0 and bonus_restant | int > 0 and not skip_coupure }}"
                               then:
                                 - action: notify.persistent_notification
                                   data:
