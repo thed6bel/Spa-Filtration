@@ -897,160 +897,102 @@ actions:
                                   target:
                                     entity_id: !input switch_power
                         - stop: "Objectif atteint"
+                      else:
+                        # Démarrage du cycle (si pompe pas déjà active)
+                        - if:
+                          - condition: state
+                            entity_id: !input switch_power
+                            state: "off"
+                          then:
+                            - action: homeassistant.turn_on
+                              target:
+                                entity_id: !input switch_power
+                            - delay:
+                                seconds: 3
 
-                    else:
+                        - if:
+                          - condition: state
+                            entity_id: !input switch_pompe
+                            state: "off"
+                          then:
+                            - action: homeassistant.turn_on
+                              target:
+                                entity_id: !input switch_pompe
 
-                      # Démarrage du cycle (si pompe pas déjà active)
-                      - if:
-                        - condition: state
-                          entity_id: !input switch_power
-                          state: "off"
-                        then:
-                          - action: homeassistant.turn_on
-                            target:
-                              entity_id: !input switch_power
-                          - delay:
-                              seconds: 3
+                        # Filtration pendant la durée du cycle
+                        - delay:
+                            minutes: "{{ duree_ce_cycle | int }}"
 
-                      - if:
-                        - condition: state
-                          entity_id: !input switch_pompe
-                          state: "off"
-                        then:
-                          - action: homeassistant.turn_on
-                            target:
-                              entity_id: !input switch_pompe
+                        # Mise à jour numéro de cycle
+                        - action: input_number.set_value
+                          target:
+                            entity_id: input_number.spa_cycle_en_cours
+                          data:
+                            value: "{{ repeat.index | int }}"
 
-                      # Filtration pendant la durée du cycle
-                      - delay:
-                          minutes: "{{ duree_ce_cycle | int }}"
+                        # ── Fin de cycle ──
+                        - if:
+                          - condition: template
+                            value_template: "{{ repeat.index == v_nb_cycles | int }}"
+                          then:
 
-                      # Mise à jour numéro de cycle
-                      - action: input_number.set_value
-                        target:
-                          entity_id: input_number.spa_cycle_en_cours
-                        data:
-                          value: "{{ repeat.index | int }}"
+                            # Dernier cycle — v2 : on utilise le bonus déjà calculé en début de cycle
+                            # pour éviter le double-comptage. On ne recalcule PAS air_time ici.
+                            - variables:
+                                minutes_filtrees_final: >-
+                                  {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
+                                  {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
 
-                      # ── Fin de cycle ──
-                      - if:
-                        - condition: template
-                          value_template: "{{ repeat.index == v_nb_cycles | int }}"
-                        then:
+                                duree_totale_final: "{{ duree_totale_cycle | int }}"
 
-                          # Dernier cycle — v2 : on utilise le bonus déjà calculé en début de cycle
-                          # pour éviter le double-comptage. On ne recalcule PAS air_time ici.
-                          - variables:
-                              minutes_filtrees_final: >-
-                                {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
-                                {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
+                                bonus_restant: >-
+                                  {{ [duree_totale_final | int - minutes_filtrees_final | int, 0] | max }}
 
-                              duree_totale_final: "{{ duree_totale_cycle | int }}"
+                            # Cycle bonus si objectif non atteint et bulles ont été utilisées
+                            - if:
+                              - condition: template
+                                value_template: "{{ bonus_minutes | int > 0 and bonus_restant | int > 0 and not skip_coupure }}"
+                              then:
+                                - action: notify.persistent_notification
+                                  data:
+                                    title: "🏊 SPA — Cycle bonus en cours"
+                                    message: >-
+                                      Bulles utilisées ({{ air_time_minutes }} min).
+                                      Cycle bonus de {{ bonus_restant }} min en cours.
 
-                              bonus_restant: >-
-                                {{ [duree_totale_final | int - minutes_filtrees_final | int, 0] | max }}
+                                - action: homeassistant.turn_on
+                                  target:
+                                    entity_id: !input switch_pompe
 
-                          # Cycle bonus si objectif non atteint et bulles ont été utilisées
-                          - if:
-                            - condition: template
-                              value_template: "{{ bonus_minutes | int > 0 and bonus_restant | int > 0 and not skip_coupure }}"
-                            then:
-                              - action: notify.persistent_notification
-                                data:
-                                  title: "🏊 SPA — Cycle bonus en cours"
-                                  message: >-
-                                    Bulles utilisées ({{ air_time_minutes }} min).
-                                    Cycle bonus de {{ bonus_restant }} min en cours.
+                                - delay:
+                                    minutes: "{{ bonus_restant | int }}"
 
-                              - action: homeassistant.turn_on
-                                target:
-                                  entity_id: !input switch_pompe
+                                - action: homeassistant.turn_off
+                                  target:
+                                    entity_id: !input switch_pompe
 
-                              - delay:
-                                  minutes: "{{ bonus_restant | int }}"
-
-                              - action: homeassistant.turn_off
-                                target:
-                                  entity_id: !input switch_pompe
-
-                          # Coupure finale
-                          - if:
-                            - condition: template
-                              value_template: "{{ skip_coupure }}"
-                            then:
-                              - action: notify.persistent_notification
-                                data:
-                                  title: "♨️ SPA — Filtration terminée, SPA maintenu"
-                                  message: >-
-                                    Filtration terminée ({{ duree_totale_cycle }} min).
-                                    Chauffage ou bulles actifs : le SPA reste allumé.
-                                    Éteignez-les manuellement pour couper le SPA.
-                            else:
-                              - if:
-                                - condition: template
-                                  value_template: "{{ v_autoriser_ext }}"
-                                then:
-                                  - action: homeassistant.turn_off
-                                    target:
-                                      entity_id: !input switch_pompe
-                                  - delay:
-                                      seconds: 10
-                                  - action: homeassistant.turn_off
-                                    target:
-                                      entity_id: !input switch_power
-
-                          # ══════════════════════════════════════════
-                          # WATCHDOG — v2
-                          # Vérifie après la fin de session si la pompe
-                          # est restée allumée anormalement longtemps
-                          # ══════════════════════════════════════════
-                          - if:
-                            - condition: template
-                              value_template: "{{ v_watchdog_actif }}"
-                            then:
-                              - variables:
-                                  minutes_reelles: >-
-                                    {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
-                                    {{ 0 if diff < 0 else diff | round(0) | int }}
-
-                                  seuil_watchdog: >-
-                                    {{ v_plage_minutes | int + v_watchdog_marge | int }}
-
-                              - if:
-                                - condition: template
-                                  value_template: "{{ minutes_reelles | int > seuil_watchdog | int }}"
-                                then:
-                                  - action: notify.persistent_notification
-                                    data:
-                                      title: "⚠️ SPA — Watchdog : pompe anormalement longue"
-                                      message: >-
-                                        La pompe a tourné {{ minutes_reelles }} min
-                                        (seuil : {{ seuil_watchdog }} min).
-                                        Vérifiez l'état du SPA. Pompe coupée en sécurité.
-                                  - action: homeassistant.turn_off
-                                    target:
-                                      entity_id: !input switch_pompe
-                                  - delay:
-                                      seconds: 5
-                                  - action: homeassistant.turn_off
-                                    target:
-                                      entity_id: !input switch_power
-
-                        else:
-
-                          # Entre deux cycles
-                          - if:
-                            - condition: template
-                              value_template: "{{ not skip_coupure and v_autoriser_ext }}"
-                            then:
-                              - action: homeassistant.turn_off
-                                target:
-                                  entity_id: !input switch_pompe
-                              - delay:
-                                  seconds: 5
-                              - action: homeassistant.turn_off
-                                target:
-                                  entity_id: !input switch_power
-
-                          - delay:
-                              minutes: "{{ intervalle_entre_cycles | int }}"
+                            # Coupure finale
+                            - if:
+                              - condition: template
+                                value_template: "{{ skip_coupure }}"
+                              then:
+                                - action: notify.persistent_notification
+                                  data:
+                                    title: "♨️ SPA — Filtration terminée, SPA maintenu"
+                                    message: >-
+                                      Filtration terminée ({{ duree_totale_cycle }} min).
+                                      Chauffage ou bulles actifs : le SPA reste allumé.
+                                      Éteignez-les manuellement pour couper le SPA.
+                              else:
+                                - if:
+                                  - condition: template
+                                    value_template: "{{ v_autoriser_ext }}"
+                                  then:
+                                    - action: homeassistant.turn_off
+                                      target:
+                                        entity_id: !input switch_pompe
+                                    - delay:
+                                        seconds: 10
+                                    - action: homeassistant.turn_off
+                                      target:
+                                        entity_id: !input switch_power
