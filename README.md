@@ -212,7 +212,7 @@ input_button:
 
 - **Home Assistant** : 2024.8.0+
 - **SPA** : Bestway Lay-Z-SPA (via intégration Tasmota / ESP8266)
-- **Intégration** : [Bestway](https://github.com/visualapproach/WiFi-remote-for-Bestway-Lay-Z-SPA/tree/master)
+- **Intégration** : [WiFi-remote-for-Bestway-Lay-Z-SPA](https://github.com/visualapproach/WiFi-remote-for-Bestway-Lay-Z-SPA/tree/master)
 
 ---
 
