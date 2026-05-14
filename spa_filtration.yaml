@@ -196,7 +196,7 @@ blueprint:
               min: 10
               max: 30
               step: 1
-              unit_of_measurement: Â°C
+              unit_of_measurement: °C
               mode: slider
 
         duree_palier_bas:
@@ -220,7 +220,7 @@ blueprint:
               min: 25
               max: 40
               step: 1
-              unit_of_measurement: Â°C
+              unit_of_measurement: °C
               mode: slider
 
         duree_palier_moyen:
@@ -322,7 +322,7 @@ blueprint:
               unit_of_measurement: min
               mode: slider
 
-# v2 : mode queued â€” les triggers ne sont plus ignores pendant les delays
+# v2 : mode queued — les triggers ne sont plus ignores pendant les delays
 # max 2 evite l'accumulation infinie
 mode: queued
 max: 2
@@ -419,9 +419,9 @@ conditions: []
 
 actions:
 
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   # STOP D'URGENCE
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   - if:
       conditions:
         - condition: trigger
@@ -446,20 +446,20 @@ actions:
                   entity_id: !input switch_power
               - action: notify.persistent_notification
                 data:
-                  title: "SPA â€” Filtration arretee"
+                  title: "SPA — Filtration arretee"
                   message: "Filtration arretee manuellement. Appuyez sur Reset pour relancer."
             else:
               - action: notify.persistent_notification
                 data:
-                  title: "SPA â€” Filtration arretee (chauffage actif)"
+                  title: "SPA — Filtration arretee (chauffage actif)"
                   message: "Filtration arretee. Le chauffage est actif, le power reste allume."
 
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  # POWER ON â€” snapshot de secours UNIQUEMENT
+  # ══════════════════════════════════════════
+  # POWER ON — snapshot de secours UNIQUEMENT
   # FIX v2.1 : ce bloc ne fait QUE le snapshot.
   # Il ne demarre PAS la boucle de filtration.
   # La boucle ne demarre qu'a heure_debut (trigger debut_cycle).
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   - if:
       conditions:
         - condition: trigger
@@ -485,11 +485,11 @@ actions:
         # Sans ce stop, l'automation continuait vers les blocs suivants
         # et evaluait skip_coupure qui pouvait etre 'true' (chauffage actif),
         # ce qui generait le message "SPA maintenu" sans avoir demarre de cycle.
-        - stop: "Snapshot power_on effectue â€” en attente de debut_cycle"
+        - stop: "Snapshot power_on effectue — en attente de debut_cycle"
 
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   # CONNEXION PERDUE
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   - if:
       conditions:
         - condition: trigger
@@ -497,7 +497,7 @@ actions:
       then:
         - action: notify.persistent_notification
           data:
-            title: "SPA â€” Connexion WiFi perdue"
+            title: "SPA — Connexion WiFi perdue"
             message: >-
               Connexion perdue en cours de cycle
               ({{ states(v_cycle_num) | int }} / {{ v_nb_cycles }}).
@@ -508,9 +508,9 @@ actions:
           data:
             value: "{{ v_nb_cycles }}"
 
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-  # RETOUR DE CONNEXION â€” cycle de rattrapage
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
+  # RETOUR DE CONNEXION — cycle de rattrapage
+  # ══════════════════════════════════════════
   - if:
       conditions:
         - condition: trigger
@@ -551,7 +551,7 @@ actions:
             then:
               - action: notify.persistent_notification
                 data:
-                  title: "SPA â€” Connexion retablie"
+                  title: "SPA — Connexion retablie"
                   message: "Il reste {{ minutes_restantes_retour }} min a filtrer. Cycle de rattrapage en cours."
               - action: homeassistant.turn_on
                 target:
@@ -585,12 +585,12 @@ actions:
             else:
               - action: notify.persistent_notification
                 data:
-                  title: "SPA â€” Connexion retablie"
+                  title: "SPA — Connexion retablie"
                   message: "Objectif atteint ou hors plage horaire. Aucun rattrapage necessaire."
 
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   # RESET MANUEL
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   - if:
       conditions:
         - condition: trigger
@@ -613,11 +613,11 @@ actions:
           target:
             entity_id: input_boolean.spa_stoppe
 
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   # BOUCLE PRINCIPALE DE FILTRATION
   # Demarre UNIQUEMENT sur debut_cycle ou reset_manuel.
   # JAMAIS sur power_on (voir stop explicite plus haut).
-  # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+  # ══════════════════════════════════════════
   - if:
       conditions:
         - condition: or
@@ -670,7 +670,7 @@ actions:
                     then:
                       - action: notify.persistent_notification
                         data:
-                          title: "SPA â€” Impossible de demarrer"
+                          title: "SPA — Impossible de demarrer"
                           message: "Le SPA est hors connexion. Verifiez l'ESP8266."
                       - stop: "SPA hors connexion"
 
@@ -688,7 +688,7 @@ actions:
                     then:
                       - action: notify.persistent_notification
                         data:
-                          title: "SPA â€” Entites manquantes"
+                          title: "SPA — Entites manquantes"
                           message: >-
                             Une ou plusieurs entites internes sont manquantes.
                             Verifiez que le bloc configuration.yaml a bien ete ajoute
@@ -737,7 +737,7 @@ actions:
                           then:
                             - action: notify.persistent_notification
                               data:
-                                title: "SPA â€” Connexion perdue"
+                                title: "SPA — Connexion perdue"
                                 message: "Connexion perdue au cycle {{ repeat.index }} / {{ v_nb_cycles }}."
                             - stop: "Connexion perdue"
 
@@ -782,7 +782,7 @@ actions:
                           duree_ce_cycle_brut: >-
                             {{ 0 if minutes_restantes_cycle <= 0 else (minutes_restantes_cycle / cycles_restants) | round(0) | int }}
 
-                          # v2 â€” duree minimum par cycle (protection pompe)
+                          # v2 — duree minimum par cycle (protection pompe)
                           duree_ce_cycle: >-
                             {% if duree_ce_cycle_brut | int == 0 %}
                               0
@@ -836,7 +836,7 @@ actions:
                           then:
                             - action: notify.persistent_notification
                               data:
-                                title: "SPA â€” Cycle annule"
+                                title: "SPA — Cycle annule"
                                 message: "Le cycle {{ repeat.index }}/{{ v_nb_cycles }} depasserait l'heure de fin. Session terminee."
                             - stop: "Depassement heure de fin"
 
@@ -847,7 +847,7 @@ actions:
                           then:
                             - action: notify.persistent_notification
                               data:
-                                title: "SPA â€” Filtration terminee"
+                                title: "SPA — Filtration terminee"
                                 message: "Objectif atteint ({{ minutes_filtrees_cycle }}/{{ duree_totale_cycle }} min). Cycles restants annules."
                             - if:
                                 conditions:
@@ -925,7 +925,7 @@ actions:
                                 then:
                                   - action: notify.persistent_notification
                                     data:
-                                      title: "SPA â€” Cycle bonus en cours"
+                                      title: "SPA — Cycle bonus en cours"
                                       message: >-
                                         Bulles utilisees ({{ air_time_minutes }} min).
                                         Cycle bonus de {{ bonus_restant }} min en cours.
@@ -945,7 +945,7 @@ actions:
                                 then:
                                   - action: notify.persistent_notification
                                     data:
-                                      title: "SPA â€” Filtration terminee, SPA maintenu"
+                                      title: "SPA — Filtration terminee, SPA maintenu"
                                       message: >-
                                         Filtration terminee ({{ duree_totale_cycle }} min).
                                         Chauffage ou bulles actifs : le SPA reste allume.
@@ -984,7 +984,7 @@ actions:
                                       then:
                                         - action: notify.persistent_notification
                                           data:
-                                            title: "SPA â€” Watchdog pompe anormalement longue"
+                                            title: "SPA — Watchdog pompe anormalement longue"
                                             message: >-
                                               La pompe a tourne {{ minutes_reelles }} min
                                               (seuil {{ seuil_watchdog }} min).
