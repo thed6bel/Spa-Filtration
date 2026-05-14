@@ -362,8 +362,6 @@ conditions: []
 
 actions:
 
-  # Routeur principal — choose sur le trigger ID
-  # Chaque branche se termine par stop pour ne pas executer les suivantes
   - choose:
 
       # ══════════════════════════════════════════
@@ -402,7 +400,6 @@ actions:
 
       # ══════════════════════════════════════════
       # POWER ON — snapshot de secours UNIQUEMENT
-      # FIX v2.1 : ne demarre PAS la boucle principale.
       # ══════════════════════════════════════════
       - conditions:
           - condition: trigger
@@ -591,7 +588,6 @@ actions:
                     value_template: "{{ v_mode in ['Automatique', 'Eco'] }}"
                 sequence:
 
-                  # Vérification connexion
                   - choose:
                       - conditions:
                           - condition: state
@@ -604,7 +600,6 @@ actions:
                               message: "Le SPA est hors connexion. Verifiez l'ESP8266."
                           - stop: "SPA hors connexion"
 
-                  # Vérification entités internes
                   - choose:
                       - conditions:
                           - condition: template
@@ -626,7 +621,6 @@ actions:
                                 et que Home Assistant a ete redemarre.
                           - stop: "Entites manquantes"
 
-                  # Snapshot de session
                   - action: input_number.set_value
                     target:
                       entity_id: input_number.spa_snapshot_pump_time
@@ -646,12 +640,10 @@ actions:
                     data:
                       value: 1
 
-                  # ── BOUCLE CYCLES ──
                   - repeat:
                       count: "{{ v_nb_cycles | int }}"
                       sequence:
 
-                        # Vérification STOP
                         - choose:
                             - conditions:
                                 - condition: state
@@ -660,7 +652,6 @@ actions:
                               sequence:
                                 - stop: "STOP urgence actif"
 
-                        # Vérification connexion
                         - choose:
                             - conditions:
                                 - condition: state
@@ -673,7 +664,6 @@ actions:
                                     message: "Connexion perdue au cycle {{ repeat.index }} / {{ v_nb_cycles }}."
                                 - stop: "Connexion perdue"
 
-                        # Calcul des variables du cycle
                         - variables:
                             duree_base_cycle: >-
                               {% set t = states(v_temp) | float(20) %}
@@ -734,7 +724,6 @@ actions:
                             skip_coupure: >-
                               {{ states(v_chauffage_bin) == 'on' or states(v_bulles) == 'on' }}
 
-                        # Mise a jour objectif et bonus
                         - action: input_number.set_value
                           target:
                             entity_id: input_number.spa_duree_objectif
@@ -746,7 +735,6 @@ actions:
                           data:
                             value: "{{ bonus_minutes | int }}"
 
-                        # Depassement heure de fin
                         - choose:
                             - conditions:
                                 - condition: template
@@ -758,7 +746,6 @@ actions:
                                     message: "Le cycle {{ repeat.index }}/{{ v_nb_cycles }} depasserait l'heure de fin."
                                 - stop: "Depassement heure de fin"
 
-                        # Objectif deja atteint
                         - choose:
                             - conditions:
                                 - condition: template
@@ -786,7 +773,6 @@ actions:
                                             entity_id: !input switch_power
                                 - stop: "Objectif atteint"
 
-                        # Demarrage du cycle
                         - choose:
                             - conditions:
                                 - condition: state
@@ -808,26 +794,22 @@ actions:
                                   target:
                                     entity_id: !input switch_pompe
 
-                        # Filtration
                         - delay:
                             minutes: "{{ duree_ce_cycle | int }}"
 
-                        # Mise a jour cycle en cours
                         - action: input_number.set_value
                           target:
                             entity_id: input_number.spa_cycle_en_cours
                           data:
                             value: "{{ repeat.index | int }}"
 
-                        # ── Fin de cycle : dernier ou intermediaire ──
                         - choose:
 
-                            # DERNIER CYCLE
+                            # ── DERNIER CYCLE ──
                             - conditions:
                                 - condition: template
                                   value_template: "{{ repeat.index == v_nb_cycles | int }}"
                               sequence:
-                                # Variables fin de session
                                 - variables:
                                     minutes_filtrees_final: >-
                                       {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
@@ -854,8 +836,9 @@ actions:
                                           target:
                                             entity_id: !input switch_pompe
 
-                                # Coupure finale ou maintien
+                                # Coupure finale
                                 - choose:
+                                    # CAS 1 : chauffage ou bulles actifs — on maintient et on notifie
                                     - conditions:
                                         - condition: template
                                           value_template: "{{ skip_coupure }}"
@@ -867,20 +850,38 @@ actions:
                                               Filtration terminee ({{ duree_totale_cycle }} min).
                                               Chauffage ou bulles actifs : SPA reste allume.
                                               Eteignez manuellement pour couper.
+
+                                    # CAS 2 : extinction autorisee — on coupe et on notifie
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ v_autoriser_ext }}"
+                                      sequence:
+                                        # FIX v2.3 : notification ajoutee ici — ce chemin etait
+                                        # le seul sans notification en fin de session normale
+                                        - action: notify.persistent_notification
+                                          data:
+                                            title: "SPA — Session terminee"
+                                            message: >-
+                                              Filtration terminee ({{ duree_totale_cycle }} min
+                                              sur {{ v_plage_minutes }} min de plage).
+                                              Pompe et SPA coupes.
+                                        - action: homeassistant.turn_off
+                                          target:
+                                            entity_id: !input switch_pompe
+                                        - delay:
+                                            seconds: 10
+                                        - action: homeassistant.turn_off
+                                          target:
+                                            entity_id: !input switch_power
+
+                                  # CAS 3 : extinction non autorisee — on laisse allume, on notifie
                                   default:
-                                    - choose:
-                                        - conditions:
-                                            - condition: template
-                                              value_template: "{{ v_autoriser_ext }}"
-                                          sequence:
-                                            - action: homeassistant.turn_off
-                                              target:
-                                                entity_id: !input switch_pompe
-                                            - delay:
-                                                seconds: 10
-                                            - action: homeassistant.turn_off
-                                              target:
-                                                entity_id: !input switch_power
+                                    - action: notify.persistent_notification
+                                      data:
+                                        title: "SPA — Session terminee (SPA maintenu)"
+                                        message: >-
+                                          Filtration terminee ({{ duree_totale_cycle }} min).
+                                          Extinction non autorisee : SPA reste allume.
 
                                 # Watchdog
                                 - choose:
@@ -915,7 +916,7 @@ actions:
                                                   target:
                                                     entity_id: !input switch_power
 
-                          # CYCLE INTERMEDIAIRE
+                          # ── CYCLE INTERMEDIAIRE ──
                           default:
                             - choose:
                                 - conditions:
