@@ -1,0 +1,88 @@
+blueprint:
+  name: "SPA — Coupure automatique des bulles"
+  description: >-
+    ## Coupure automatique des bulles (sécurité enfants / oubli)
+
+    Blueprint compagnon de spa_filtration.yaml v2.
+
+    Extrait de l'automation principale pour fonctionner de manière fiable
+    même lorsque la filtration est en cours (évite le problème mode: single).
+
+    ### Fonctionnement
+    - Dès que les bulles sont allumées, un timer démarre
+    - Si les bulles sont toujours allumées après la durée configurée : coupure automatique
+    - Si les bulles sont éteintes manuellement avant : timer annulé, aucune action
+
+    ### Installation
+    1. Importez ce blueprint séparément dans Home Assistant
+    2. Créez une automation depuis ce blueprint
+    3. Configurez les mêmes entités que spa_filtration.yaml
+
+  domain: automation
+  homeassistant:
+    min_version: 2024.8.0
+
+  input:
+    switch_bulles:
+      name: "Interrupteur bulles"
+      description: "switch.layzspa_airbubbles"
+      selector:
+        entity:
+          filter:
+            domain: switch
+          multiple: false
+
+    coupure_bulles_auto:
+      name: "Couper les bulles automatiquement"
+      description: "Si désactivé, l'automation ne fait rien (pratique pour suspendre sans supprimer)"
+      default: true
+      selector:
+        boolean:
+
+    duree_max_bulles:
+      name: "Durée maximale des bulles (minutes)"
+      description: "Les bulles seront coupées après cette durée si toujours actives"
+      default: 45
+      selector:
+        number:
+          min: 15
+          max: 120
+          step: 5
+          unit_of_measurement: min
+          mode: slider
+
+# Cette automation est courte et sans état partagé : mode restart est correct.
+# Si les bulles sont rallumées pendant le timer, le timer repart de zéro.
+mode: restart
+
+variables:
+  v_bulles:         !input switch_bulles
+  v_coupure_bulles: !input coupure_bulles_auto
+  v_duree_bulles:   !input duree_max_bulles
+
+triggers:
+  - trigger: state
+    entity_id: !input switch_bulles
+    to: "on"
+    id: "bulles_on"
+
+conditions:
+  - condition: template
+    value_template: "{{ v_coupure_bulles }}"
+
+actions:
+  - delay:
+      minutes: "{{ v_duree_bulles | int }}"
+
+  - if:
+    - condition: state
+      entity_id: !input switch_bulles
+      state: "on"
+    then:
+      - action: homeassistant.turn_off
+        target:
+          entity_id: !input switch_bulles
+      - action: notify.persistent_notification
+        data:
+          title: "💧 SPA — Bulles coupées automatiquement"
+          message: "Les bulles ont été coupées après {{ v_duree_bulles }} minutes (sécurité)."
