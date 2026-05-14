@@ -1,44 +1,10 @@
 blueprint:
   name: "Gestion filtration SPA Bestway Lay-Z-SPA v2"
   description: >-
-    ## Gestion automatique de la filtration du SPA Bestway Lay-Z-SPA
-
-    Gere automatiquement la filtration en fonction de la temperature de l'eau,
-    de l'utilisation reelle (bulles) et de l'etat du chauffage.
-
-    ### Fonctionnalites
-    - Duree de filtration adaptee a la temperature (3 paliers configurables)
-    - Recalcul a chaque cycle selon la temperature actuelle
-    - Bonus de filtration base sur sensor.layzspa_air_time (temps bulles reel)
-    - Repartition en N cycles sur une plage horaire configurable
-    - Fonctionne en plage nocturne (ex 22h a 8h) sans coupure a minuit
-    - Skip coupure pompe/power si chauffage ou bulles actifs en fin de cycle
-    - Cycle bonus automatique en fin de derniere session si bulles utilisees
-    - Coupure automatique des bulles geree dans une automation separee (v2)
-    - Bouton STOP urgence
-    - Duree minimum de cycle (protection pompe) v2
-    - Correction double-comptage bonus final v2
-    - Watchdog securite pompe v2
-    - Verification des entites manquantes au demarrage
-
-    ### Corrections v2.1
-    - BUG CRITIQUE : le trigger power_on ne declenche plus jamais la boucle principale
-    - skip_coupure desormais evalue UNIQUEMENT en fin de cycle reel, pas au trigger power_on
-    - La pompe n'est plus laissee ON sans surveillance si le SPA est allume manuellement
-
-    ### Changements v2
-    - mode queued (etait single)
-    - Coupure bulles auto extraite en automation separee (spa_bulles_auto_off.yaml)
-    - Seuil bonus minimum porte a 10 min (etait 2 min)
-    - Duree minimum par cycle 15 min (protection pompe)
-    - Correction du double-comptage du bonus en fin de derniere session
-    - Watchdog alerte si pompe ON > plage + 60 min
-
-    ### Installation
-    1. Copiez le bloc configuration.yaml fourni dans votre configuration.yaml
-    2. Importez egalement spa_bulles_auto_off.yaml comme second blueprint
-    3. Redemarrez Home Assistant
-    4. Configurez les deux automations
+    Gestion automatique filtration SPA Bestway Lay-Z-SPA.
+    Duree adaptee a la temperature, bonus bulles, cycles multiples,
+    plage nocturne, skip coupure si chauffage actif, watchdog securite.
+    Blueprint compagnon spa_bulles_auto_off.yaml requis pour coupure bulles auto.
 
   domain: automation
   homeassistant:
@@ -86,7 +52,7 @@ blueprint:
               multiple: false
 
         sensor_temperature:
-          name: "Capteur temperature de l'eau"
+          name: "Capteur temperature eau (C)"
           description: "sensor.layzspa_temp_c"
           selector:
             entity:
@@ -96,7 +62,7 @@ blueprint:
               multiple: false
 
         sensor_pump_time:
-          name: "Capteur temps de pompe cumulatif (heures)"
+          name: "Capteur temps pompe cumulatif (heures)"
           description: "sensor.layzspa_pump_time"
           selector:
             entity:
@@ -105,7 +71,7 @@ blueprint:
               multiple: false
 
         sensor_air_time:
-          name: "Capteur temps de bulles cumulatif (heures)"
+          name: "Capteur temps bulles cumulatif (heures)"
           description: "sensor.layzspa_air_time"
           selector:
             entity:
@@ -114,7 +80,7 @@ blueprint:
               multiple: false
 
         binary_connexion:
-          name: "Capteur de connexion WiFi"
+          name: "Capteur connexion WiFi"
           description: "binary_sensor.layzspa_connection"
           selector:
             entity:
@@ -128,22 +94,20 @@ blueprint:
       icon: mdi:water-pump
       input:
         heure_debut:
-          name: "Heure de debut du 1er cycle"
-          description: "Pour une plage nocturne : ex 22:00:00 avec heure de fin a 08:00:00"
+          name: "Heure de debut"
           default: "08:00:00"
           selector:
             time:
 
         heure_fin:
-          name: "Heure de fin de la plage de filtration"
-          description: "Si heure_fin < heure_debut, la plage est nocturne (ex 22h a 8h)"
+          name: "Heure de fin"
+          description: "Si heure_fin < heure_debut la plage est nocturne (ex 22h a 8h)"
           default: "22:00:00"
           selector:
             time:
 
         nb_cycles:
           name: "Nombre de cycles par jour"
-          description: "La duree totale est repartie en N cycles egaux sur la plage"
           default: 3
           selector:
             number:
@@ -154,7 +118,7 @@ blueprint:
 
         mode_filtration:
           name: "Mode de filtration"
-          description: "Automatique gestion complete. Eco duree divisee par 2. Force pompe toujours active. Inactif SPA eteint."
+          description: "Automatique / Eco (duree /2) / Force (pompe toujours ON) / Inactif"
           default: "Automatique"
           selector:
             select:
@@ -165,15 +129,14 @@ blueprint:
                 - "Inactif"
 
         autoriser_extinction:
-          name: "Eteindre le SPA entre les cycles et en fin de filtration"
-          description: "Desactivez si vous ne souhaitez pas que le blueprint coupe le power"
+          name: "Autoriser l extinction entre les cycles"
           default: true
           selector:
             boolean:
 
         duree_min_cycle:
           name: "Duree minimum par cycle (minutes)"
-          description: "Protection pompe : si un cycle calcule est inferieur a cette duree, il est force a ce minimum. Recommande 15 min."
+          description: "Protection pompe. Recommande 15 min."
           default: 15
           selector:
             number:
@@ -189,7 +152,6 @@ blueprint:
       input:
         seuil_temp_bas:
           name: "Seuil temperature basse (C)"
-          description: "En dessous de ce seuil : duree palier bas"
           default: 25
           selector:
             number:
@@ -201,7 +163,6 @@ blueprint:
 
         duree_palier_bas:
           name: "Duree palier bas (minutes)"
-          description: "Duree totale quotidienne si temperature < seuil bas"
           default: 240
           selector:
             number:
@@ -213,7 +174,6 @@ blueprint:
 
         seuil_temp_haut:
           name: "Seuil temperature haute (C)"
-          description: "Au-dessus de ce seuil duree palier haut. Entre les deux seuils duree palier moyen."
           default: 35
           selector:
             number:
@@ -225,7 +185,6 @@ blueprint:
 
         duree_palier_moyen:
           name: "Duree palier moyen (minutes)"
-          description: "Duree totale si seuil bas <= temperature < seuil haut"
           default: 360
           selector:
             number:
@@ -237,7 +196,6 @@ blueprint:
 
         duree_palier_haut:
           name: "Duree palier haut (minutes)"
-          description: "Duree totale si temperature >= seuil haut"
           default: 480
           selector:
             number:
@@ -248,12 +206,12 @@ blueprint:
               mode: slider
 
     bonus_utilisation:
-      name: "Bonus de filtration apres utilisation des bulles"
+      name: "Bonus filtration apres utilisation des bulles"
       icon: mdi:account-clock
       input:
         seuil_bonus_court:
           name: "Seuil session courte (minutes)"
-          description: "Duree minimum de bulles pour declencher le bonus court. En dessous aucun bonus. Recommande 10 min."
+          description: "En dessous aucun bonus (anti-accidentel). Recommande 10 min."
           default: 10
           selector:
             number:
@@ -265,7 +223,6 @@ blueprint:
 
         seuil_bonus_long:
           name: "Seuil session longue (minutes)"
-          description: "Si temps de bulles >= ce seuil bonus long. Sinon bonus court."
           default: 30
           selector:
             number:
@@ -277,7 +234,6 @@ blueprint:
 
         bonus_court:
           name: "Bonus session courte (minutes)"
-          description: "Ajoute si seuil_court <= temps bulles < seuil_long"
           default: 60
           selector:
             number:
@@ -289,7 +245,6 @@ blueprint:
 
         bonus_long:
           name: "Bonus session longue (minutes)"
-          description: "Ajoute si temps de bulles >= seuil long"
           default: 120
           selector:
             number:
@@ -305,14 +260,14 @@ blueprint:
       input:
         watchdog_actif:
           name: "Activer le watchdog"
-          description: "Envoie une alerte si la pompe reste allumee anormalement longtemps. Recommande activer."
+          description: "Alerte si pompe ON anormalement longtemps. Recommande activer."
           default: true
           selector:
             boolean:
 
         watchdog_marge:
           name: "Marge watchdog (minutes)"
-          description: "La pompe peut etre ON au maximum pendant duree plage + cette marge. Au-dela alerte envoyee. Recommande 60 min."
+          description: "Alerte si pompe ON > duree plage + cette marge."
           default: 60
           selector:
             number:
@@ -322,8 +277,6 @@ blueprint:
               unit_of_measurement: min
               mode: slider
 
-# v2 : mode queued — les triggers ne sont plus ignores pendant les delays
-# max 2 evite l'accumulation infinie
 mode: queued
 max: 2
 max_exceeded: silent
@@ -337,44 +290,34 @@ variables:
   v_pump_time:     !input sensor_pump_time
   v_air_time:      !input sensor_air_time
   v_connexion:     !input binary_connexion
-
   v_nb_cycles:     !input nb_cycles
   v_mode:          !input mode_filtration
   v_autoriser_ext: !input autoriser_extinction
   v_heure_debut:   !input heure_debut
   v_heure_fin:     !input heure_fin
   v_duree_min:     !input duree_min_cycle
-
-  v_seuil_bas:   !input seuil_temp_bas
-  v_duree_bas:   !input duree_palier_bas
-  v_seuil_haut:  !input seuil_temp_haut
-  v_duree_moyen: !input duree_palier_moyen
-  v_duree_haut:  !input duree_palier_haut
-
+  v_seuil_bas:     !input seuil_temp_bas
+  v_duree_bas:     !input duree_palier_bas
+  v_seuil_haut:    !input seuil_temp_haut
+  v_duree_moyen:   !input duree_palier_moyen
+  v_duree_haut:    !input duree_palier_haut
   v_seuil_bonus_court: !input seuil_bonus_court
   v_seuil_bonus:       !input seuil_bonus_long
   v_bonus_court:       !input bonus_court
   v_bonus_long:        !input bonus_long
-
   v_watchdog_actif: !input watchdog_actif
   v_watchdog_marge: !input watchdog_marge
-
   v_snapshot_pump: "input_number.spa_snapshot_pump_time"
   v_snapshot_air:  "input_number.spa_snapshot_air_time"
   v_objectif:      "input_number.spa_duree_objectif"
   v_bonus_min:     "input_number.spa_bonus_minutes"
   v_cycle_num:     "input_number.spa_cycle_en_cours"
-  v_bool_snapshot: "input_boolean.spa_snapshot_fait"
-  v_bool_stoppe:   "input_boolean.spa_stoppe"
-
   v_heure_debut_min: >-
     {% set h = v_heure_debut.split(':') %}
     {{ h[0] | int * 60 + h[1] | int }}
-
   v_heure_fin_min: >-
     {% set h = v_heure_fin.split(':') %}
     {{ h[0] | int * 60 + h[1] | int }}
-
   v_plage_minutes: >-
     {% set d = v_heure_debut_min | int %}
     {% set f = v_heure_fin_min | int %}
@@ -383,612 +326,456 @@ variables:
 triggers:
   - trigger: time
     at: !input heure_debut
-    id: "debut_cycle"
+    id: debut_cycle
 
   - trigger: state
     entity_id: !input switch_bulles
     from: "on"
     to: "off"
-    id: "bulles_off"
+    id: bulles_off
 
   - trigger: state
     entity_id: input_button.spa_reset
-    id: "reset_manuel"
+    id: reset_manuel
 
   - trigger: state
     entity_id: input_button.spa_stop
-    id: "stop_urgence"
+    id: stop_urgence
 
   - trigger: state
     entity_id: !input binary_connexion
     to: "off"
-    id: "connexion_perdue"
+    id: connexion_perdue
 
   - trigger: state
     entity_id: !input binary_connexion
     from: "off"
     to: "on"
-    id: "connexion_retablie"
+    id: connexion_retablie
 
   - trigger: state
     entity_id: !input switch_power
     to: "on"
-    id: "power_on"
+    id: power_on
 
 conditions: []
 
 actions:
 
-  # ══════════════════════════════════════════
-  # STOP D'URGENCE
-  # ══════════════════════════════════════════
-  - if:
-      conditions:
-        - condition: trigger
-          id: "stop_urgence"
-      then:
-        - action: input_boolean.turn_on
-          target:
-            entity_id: input_boolean.spa_stoppe
-        - action: homeassistant.turn_off
-          target:
-            entity_id: !input switch_pompe
-        - delay:
-            seconds: 5
-        - if:
-            conditions:
-              - condition: state
-                entity_id: !input binary_chauffage_actif
-                state: "off"
-            then:
-              - action: homeassistant.turn_off
-                target:
-                  entity_id: !input switch_power
-              - action: notify.persistent_notification
-                data:
-                  title: "SPA — Filtration arretee"
-                  message: "Filtration arretee manuellement. Appuyez sur Reset pour relancer."
-            else:
+  # Routeur principal — choose sur le trigger ID
+  # Chaque branche se termine par stop pour ne pas executer les suivantes
+  - choose:
+
+      # ══════════════════════════════════════════
+      # STOP D'URGENCE
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: stop_urgence
+        sequence:
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.spa_stoppe
+          - action: homeassistant.turn_off
+            target:
+              entity_id: !input switch_pompe
+          - delay:
+              seconds: 5
+          - choose:
+              - conditions:
+                  - condition: state
+                    entity_id: !input binary_chauffage_actif
+                    state: "off"
+                sequence:
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: !input switch_power
+                  - action: notify.persistent_notification
+                    data:
+                      title: "SPA — Filtration arretee"
+                      message: "Filtration arretee manuellement. Appuyez sur Reset pour relancer."
+            default:
               - action: notify.persistent_notification
                 data:
                   title: "SPA — Filtration arretee (chauffage actif)"
-                  message: "Filtration arretee. Le chauffage est actif, le power reste allume."
+                  message: "Filtration arretee. Chauffage actif, le power reste allume."
 
-  # ══════════════════════════════════════════
-  # POWER ON — snapshot de secours UNIQUEMENT
-  # FIX v2.1 : ce bloc ne fait QUE le snapshot.
-  # Il ne demarre PAS la boucle de filtration.
-  # La boucle ne demarre qu'a heure_debut (trigger debut_cycle).
-  # ══════════════════════════════════════════
-  - if:
-      conditions:
-        - condition: trigger
-          id: "power_on"
-        - condition: state
-          entity_id: input_boolean.spa_snapshot_fait
-          state: "off"
-      then:
-        - action: input_number.set_value
-          target:
-            entity_id: input_number.spa_snapshot_pump_time
-          data:
-            value: "{{ states(v_pump_time) | float(0) }}"
-        - action: input_number.set_value
-          target:
-            entity_id: input_number.spa_snapshot_air_time
-          data:
-            value: "{{ states(v_air_time) | float(0) }}"
-        - action: input_boolean.turn_on
-          target:
+      # ══════════════════════════════════════════
+      # POWER ON — snapshot de secours UNIQUEMENT
+      # FIX v2.1 : ne demarre PAS la boucle principale.
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: power_on
+          - condition: state
             entity_id: input_boolean.spa_snapshot_fait
-        # FIX v2.1 : on s'arrete EXPLICITEMENT ici pour le trigger power_on.
-        # Sans ce stop, l'automation continuait vers les blocs suivants
-        # et evaluait skip_coupure qui pouvait etre 'true' (chauffage actif),
-        # ce qui generait le message "SPA maintenu" sans avoir demarre de cycle.
-        - stop: "Snapshot power_on effectue — en attente de debut_cycle"
+            state: "off"
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.spa_snapshot_pump_time
+            data:
+              value: "{{ states(v_pump_time) | float(0) }}"
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.spa_snapshot_air_time
+            data:
+              value: "{{ states(v_air_time) | float(0) }}"
+          - action: input_boolean.turn_on
+            target:
+              entity_id: input_boolean.spa_snapshot_fait
 
-  # ══════════════════════════════════════════
-  # CONNEXION PERDUE
-  # ══════════════════════════════════════════
-  - if:
-      conditions:
-        - condition: trigger
-          id: "connexion_perdue"
-      then:
-        - action: notify.persistent_notification
-          data:
-            title: "SPA — Connexion WiFi perdue"
-            message: >-
-              Connexion perdue en cours de cycle
-              ({{ states(v_cycle_num) | int }} / {{ v_nb_cycles }}).
-              Verifiez l'ESP8266.
-        - action: input_number.set_value
-          target:
-            entity_id: input_number.spa_cycle_en_cours
-          data:
-            value: "{{ v_nb_cycles }}"
+      # ══════════════════════════════════════════
+      # CONNEXION PERDUE
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: connexion_perdue
+        sequence:
+          - action: notify.persistent_notification
+            data:
+              title: "SPA — Connexion WiFi perdue"
+              message: >-
+                Connexion perdue en cours de cycle
+                ({{ states(v_cycle_num) | int }} / {{ v_nb_cycles }}).
+                Verifiez l'ESP8266.
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.spa_cycle_en_cours
+            data:
+              value: "{{ v_nb_cycles }}"
 
-  # ══════════════════════════════════════════
-  # RETOUR DE CONNEXION — cycle de rattrapage
-  # ══════════════════════════════════════════
-  - if:
-      conditions:
-        - condition: trigger
-          id: "connexion_retablie"
-        - condition: template
-          value_template: "{{ v_mode in ['Automatique', 'Eco'] }}"
-        - condition: state
-          entity_id: input_boolean.spa_stoppe
-          state: "off"
-      then:
-        - variables:
-            duree_base_retour: >-
-              {% set t = states(v_temp) | float(20) %}
-              {% if t < v_seuil_bas %}
-                {{ v_duree_bas | int }}
-              {% elif t < v_seuil_haut %}
-                {{ v_duree_moyen | int }}
-              {% else %}
-                {{ v_duree_haut | int }}
-              {% endif %}
-            duree_totale_retour: >-
-              {% set base = (duree_base_retour | int / 2) | round(0) | int if v_mode == 'Eco' else duree_base_retour | int %}
-              {{ base + (states(v_bonus_min) | float(0) | round(0) | int) }}
-            minutes_filtrees_retour: >-
-              {% set diff = (states(v_pump_time) | float(0) - states(v_snapshot_pump) | float(0)) * 60 %}
-              {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
-            minutes_restantes_retour: >-
-              {{ [duree_totale_retour | int - minutes_filtrees_retour | int, 0] | max }}
-            dans_plage: >-
-              {% set n = now().hour * 60 + now().minute %}
-              {% set d = v_heure_debut_min | int %}
-              {% set f = v_heure_fin_min | int %}
-              {{ (n >= d and n < f) if f > d else (n >= d or n < f) }}
-        - if:
-            conditions:
-              - condition: template
-                value_template: "{{ minutes_restantes_retour | int > 0 and dans_plage }}"
-            then:
-              - action: notify.persistent_notification
-                data:
-                  title: "SPA — Connexion retablie"
-                  message: "Il reste {{ minutes_restantes_retour }} min a filtrer. Cycle de rattrapage en cours."
-              - action: homeassistant.turn_on
-                target:
-                  entity_id: !input switch_power
-              - delay:
-                  seconds: 3
-              - action: homeassistant.turn_on
-                target:
-                  entity_id: !input switch_pompe
-              - delay:
-                  minutes: "{{ minutes_restantes_retour | int }}"
-              - action: homeassistant.turn_off
-                target:
-                  entity_id: !input switch_pompe
-              - if:
-                  conditions:
-                    - condition: state
-                      entity_id: !input binary_chauffage_actif
-                      state: "off"
-                    - condition: state
-                      entity_id: !input switch_bulles
-                      state: "off"
-                    - condition: template
-                      value_template: "{{ v_autoriser_ext }}"
-                  then:
-                    - delay:
-                        seconds: 5
-                    - action: homeassistant.turn_off
-                      target:
-                        entity_id: !input switch_power
-            else:
+      # ══════════════════════════════════════════
+      # RETOUR DE CONNEXION — cycle de rattrapage
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: connexion_retablie
+          - condition: template
+            value_template: "{{ v_mode in ['Automatique', 'Eco'] }}"
+          - condition: state
+            entity_id: input_boolean.spa_stoppe
+            state: "off"
+        sequence:
+          - variables:
+              duree_base_retour: >-
+                {% set t = states(v_temp) | float(20) %}
+                {% if t < v_seuil_bas %}
+                  {{ v_duree_bas | int }}
+                {% elif t < v_seuil_haut %}
+                  {{ v_duree_moyen | int }}
+                {% else %}
+                  {{ v_duree_haut | int }}
+                {% endif %}
+              duree_totale_retour: >-
+                {% set base = (duree_base_retour | int / 2) | round(0) | int if v_mode == 'Eco' else duree_base_retour | int %}
+                {{ base + (states(v_bonus_min) | float(0) | round(0) | int) }}
+              minutes_filtrees_retour: >-
+                {% set diff = (states(v_pump_time) | float(0) - states(v_snapshot_pump) | float(0)) * 60 %}
+                {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
+              minutes_restantes_retour: >-
+                {{ [duree_totale_retour | int - minutes_filtrees_retour | int, 0] | max }}
+              dans_plage_retour: >-
+                {% set n = now().hour * 60 + now().minute %}
+                {% set d = v_heure_debut_min | int %}
+                {% set f = v_heure_fin_min | int %}
+                {{ (n >= d and n < f) if f > d else (n >= d or n < f) }}
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ minutes_restantes_retour | int > 0 and dans_plage_retour }}"
+                sequence:
+                  - action: notify.persistent_notification
+                    data:
+                      title: "SPA — Connexion retablie"
+                      message: "Il reste {{ minutes_restantes_retour }} min a filtrer. Cycle de rattrapage en cours."
+                  - action: homeassistant.turn_on
+                    target:
+                      entity_id: !input switch_power
+                  - delay:
+                      seconds: 3
+                  - action: homeassistant.turn_on
+                    target:
+                      entity_id: !input switch_pompe
+                  - delay:
+                      minutes: "{{ minutes_restantes_retour | int }}"
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: !input switch_pompe
+                  - choose:
+                      - conditions:
+                          - condition: state
+                            entity_id: !input binary_chauffage_actif
+                            state: "off"
+                          - condition: state
+                            entity_id: !input switch_bulles
+                            state: "off"
+                          - condition: template
+                            value_template: "{{ v_autoriser_ext }}"
+                        sequence:
+                          - delay:
+                              seconds: 5
+                          - action: homeassistant.turn_off
+                            target:
+                              entity_id: !input switch_power
+            default:
               - action: notify.persistent_notification
                 data:
                   title: "SPA — Connexion retablie"
                   message: "Objectif atteint ou hors plage horaire. Aucun rattrapage necessaire."
 
-  # ══════════════════════════════════════════
-  # RESET MANUEL
-  # ══════════════════════════════════════════
-  - if:
-      conditions:
-        - condition: trigger
-          id: "reset_manuel"
-      then:
-        - action: input_number.set_value
-          target:
-            entity_id: input_number.spa_bonus_minutes
-          data:
-            value: 0
-        - action: input_number.set_value
-          target:
-            entity_id: input_number.spa_cycle_en_cours
-          data:
-            value: 0
-        - action: input_boolean.turn_off
-          target:
-            entity_id: input_boolean.spa_snapshot_fait
-        - action: input_boolean.turn_off
-          target:
+      # ══════════════════════════════════════════
+      # RESET MANUEL
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: reset_manuel
+        sequence:
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.spa_bonus_minutes
+            data:
+              value: 0
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.spa_cycle_en_cours
+            data:
+              value: 0
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.spa_snapshot_fait
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.spa_stoppe
+
+      # ══════════════════════════════════════════
+      # BOUCLE PRINCIPALE — debut_cycle uniquement
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: debut_cycle
+          - condition: state
             entity_id: input_boolean.spa_stoppe
+            state: "off"
+        sequence:
+          - choose:
 
-  # ══════════════════════════════════════════
-  # BOUCLE PRINCIPALE DE FILTRATION
-  # Demarre UNIQUEMENT sur debut_cycle ou reset_manuel.
-  # JAMAIS sur power_on (voir stop explicite plus haut).
-  # ══════════════════════════════════════════
-  - if:
-      conditions:
-        - condition: or
-          conditions:
-            - condition: trigger
-              id: "debut_cycle"
-            - condition: trigger
-              id: "reset_manuel"
-        - condition: state
-          entity_id: input_boolean.spa_stoppe
-          state: "off"
-      then:
-        - choose:
-            - conditions:
-                - condition: template
-                  value_template: "{{ v_mode == 'Inactif' }}"
-              sequence:
-                - action: homeassistant.turn_off
-                  target:
-                    entity_id: !input switch_pompe
-                - delay:
-                    seconds: 5
-                - action: homeassistant.turn_off
-                  target:
-                    entity_id: !input switch_power
+              - conditions:
+                  - condition: template
+                    value_template: "{{ v_mode == 'Inactif' }}"
+                sequence:
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: !input switch_pompe
+                  - delay:
+                      seconds: 5
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: !input switch_power
 
-            - conditions:
-                - condition: template
-                  value_template: "{{ v_mode == 'Force' }}"
-              sequence:
-                - action: homeassistant.turn_on
-                  target:
-                    entity_id: !input switch_power
-                - delay:
-                    seconds: 3
-                - action: homeassistant.turn_on
-                  target:
-                    entity_id: !input switch_pompe
+              - conditions:
+                  - condition: template
+                    value_template: "{{ v_mode == 'Force' }}"
+                sequence:
+                  - action: homeassistant.turn_on
+                    target:
+                      entity_id: !input switch_power
+                  - delay:
+                      seconds: 3
+                  - action: homeassistant.turn_on
+                    target:
+                      entity_id: !input switch_pompe
 
-            - conditions:
-                - condition: template
-                  value_template: "{{ v_mode in ['Automatique', 'Eco'] }}"
-              sequence:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ v_mode in ['Automatique', 'Eco'] }}"
+                sequence:
 
-                - if:
-                    conditions:
-                      - condition: state
-                        entity_id: !input binary_connexion
-                        state: "off"
-                    then:
-                      - action: notify.persistent_notification
-                        data:
-                          title: "SPA — Impossible de demarrer"
-                          message: "Le SPA est hors connexion. Verifiez l'ESP8266."
-                      - stop: "SPA hors connexion"
+                  # Vérification connexion
+                  - choose:
+                      - conditions:
+                          - condition: state
+                            entity_id: !input binary_connexion
+                            state: "off"
+                        sequence:
+                          - action: notify.persistent_notification
+                            data:
+                              title: "SPA — Impossible de demarrer"
+                              message: "Le SPA est hors connexion. Verifiez l'ESP8266."
+                          - stop: "SPA hors connexion"
 
-                - if:
-                    conditions:
-                      - condition: template
-                        value_template: >-
-                          {{ states('input_number.spa_snapshot_pump_time') in ['unknown', 'unavailable']
-                          or states('input_number.spa_snapshot_air_time') in ['unknown', 'unavailable']
-                          or states('input_number.spa_duree_objectif') in ['unknown', 'unavailable']
-                          or states('input_number.spa_bonus_minutes') in ['unknown', 'unavailable']
-                          or states('input_number.spa_cycle_en_cours') in ['unknown', 'unavailable']
-                          or states('input_boolean.spa_snapshot_fait') in ['unknown', 'unavailable']
-                          or states('input_boolean.spa_stoppe') in ['unknown', 'unavailable'] }}
-                    then:
-                      - action: notify.persistent_notification
-                        data:
-                          title: "SPA — Entites manquantes"
-                          message: >-
-                            Une ou plusieurs entites internes sont manquantes.
-                            Verifiez que le bloc configuration.yaml a bien ete ajoute
-                            et que Home Assistant a ete redemarre.
-                      - stop: "Entites manquantes"
+                  # Vérification entités internes
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: >-
+                              {{ states('input_number.spa_snapshot_pump_time') in ['unknown', 'unavailable']
+                              or states('input_number.spa_snapshot_air_time') in ['unknown', 'unavailable']
+                              or states('input_number.spa_duree_objectif') in ['unknown', 'unavailable']
+                              or states('input_number.spa_bonus_minutes') in ['unknown', 'unavailable']
+                              or states('input_number.spa_cycle_en_cours') in ['unknown', 'unavailable']
+                              or states('input_boolean.spa_snapshot_fait') in ['unknown', 'unavailable']
+                              or states('input_boolean.spa_stoppe') in ['unknown', 'unavailable'] }}
+                        sequence:
+                          - action: notify.persistent_notification
+                            data:
+                              title: "SPA — Entites manquantes"
+                              message: >-
+                                Une ou plusieurs entites internes sont manquantes.
+                                Verifiez que le bloc configuration.yaml a bien ete ajoute
+                                et que Home Assistant a ete redemarre.
+                          - stop: "Entites manquantes"
 
-                - action: input_number.set_value
-                  target:
-                    entity_id: input_number.spa_snapshot_pump_time
-                  data:
-                    value: "{{ states(v_pump_time) | float(0) }}"
+                  # Snapshot de session
+                  - action: input_number.set_value
+                    target:
+                      entity_id: input_number.spa_snapshot_pump_time
+                    data:
+                      value: "{{ states(v_pump_time) | float(0) }}"
+                  - action: input_number.set_value
+                    target:
+                      entity_id: input_number.spa_snapshot_air_time
+                    data:
+                      value: "{{ states(v_air_time) | float(0) }}"
+                  - action: input_boolean.turn_on
+                    target:
+                      entity_id: input_boolean.spa_snapshot_fait
+                  - action: input_number.set_value
+                    target:
+                      entity_id: input_number.spa_cycle_en_cours
+                    data:
+                      value: 1
 
-                - action: input_number.set_value
-                  target:
-                    entity_id: input_number.spa_snapshot_air_time
-                  data:
-                    value: "{{ states(v_air_time) | float(0) }}"
+                  # ── BOUCLE CYCLES ──
+                  - repeat:
+                      count: "{{ v_nb_cycles | int }}"
+                      sequence:
 
-                - action: input_boolean.turn_on
-                  target:
-                    entity_id: input_boolean.spa_snapshot_fait
+                        # Vérification STOP
+                        - choose:
+                            - conditions:
+                                - condition: state
+                                  entity_id: input_boolean.spa_stoppe
+                                  state: "on"
+                              sequence:
+                                - stop: "STOP urgence actif"
 
-                - action: input_number.set_value
-                  target:
-                    entity_id: input_number.spa_cycle_en_cours
-                  data:
-                    value: 1
+                        # Vérification connexion
+                        - choose:
+                            - conditions:
+                                - condition: state
+                                  entity_id: !input binary_connexion
+                                  state: "off"
+                              sequence:
+                                - action: notify.persistent_notification
+                                  data:
+                                    title: "SPA — Connexion perdue"
+                                    message: "Connexion perdue au cycle {{ repeat.index }} / {{ v_nb_cycles }}."
+                                - stop: "Connexion perdue"
 
-                - repeat:
-                    count: "{{ v_nb_cycles | int }}"
-                    sequence:
-
-                      - if:
-                          conditions:
-                            - condition: state
-                              entity_id: input_boolean.spa_stoppe
-                              state: "on"
-                          then:
-                            - stop: "STOP urgence actif"
-
-                      - if:
-                          conditions:
-                            - condition: state
-                              entity_id: !input binary_connexion
-                              state: "off"
-                          then:
-                            - action: notify.persistent_notification
-                              data:
-                                title: "SPA — Connexion perdue"
-                                message: "Connexion perdue au cycle {{ repeat.index }} / {{ v_nb_cycles }}."
-                            - stop: "Connexion perdue"
-
-                      - variables:
-                          duree_base_cycle: >-
-                            {% set t = states(v_temp) | float(20) %}
-                            {% if t < v_seuil_bas %}
-                              {{ v_duree_bas | int }}
-                            {% elif t < v_seuil_haut %}
-                              {{ v_duree_moyen | int }}
-                            {% else %}
-                              {{ v_duree_haut | int }}
-                            {% endif %}
-
-                          air_time_minutes: >-
-                            {% set diff = (states(v_air_time) | float(0) - states('input_number.spa_snapshot_air_time') | float(0)) * 60 %}
-                            {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
-
-                          bonus_minutes: >-
-                            {% if air_time_minutes | int >= v_seuil_bonus %}
-                              {{ v_bonus_long | int }}
-                            {% elif air_time_minutes | int >= v_seuil_bonus_court %}
-                              {{ v_bonus_court | int }}
-                            {% else %}
-                              0
-                            {% endif %}
-
-                          duree_totale_cycle: >-
-                            {% set base = (duree_base_cycle | int / 2) | round(0) | int if v_mode == 'Eco' else duree_base_cycle | int %}
-                            {{ base + (bonus_minutes | int) }}
-
-                          minutes_filtrees_cycle: >-
-                            {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
-                            {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
-
-                          minutes_restantes_cycle: >-
-                            {{ [duree_totale_cycle | int - minutes_filtrees_cycle | int, 0] | max }}
-
-                          cycles_restants: >-
-                            {{ v_nb_cycles | int - repeat.index | int + 1 }}
-
-                          duree_ce_cycle_brut: >-
-                            {{ 0 if minutes_restantes_cycle <= 0 else (minutes_restantes_cycle / cycles_restants) | round(0) | int }}
-
-                          # v2 — duree minimum par cycle (protection pompe)
-                          duree_ce_cycle: >-
-                            {% if duree_ce_cycle_brut | int == 0 %}
-                              0
-                            {% elif duree_ce_cycle_brut | int < v_duree_min | int %}
-                              {{ v_duree_min | int }}
-                            {% else %}
-                              {{ duree_ce_cycle_brut | int }}
-                            {% endif %}
-
-                          intervalle_entre_cycles: >-
-                            {% set pause = ((v_plage_minutes | int - duree_totale_cycle | int) / (v_nb_cycles | int)) | round(0) | int %}
-                            {{ [pause, 5] | max }}
-
-                          depasse_heure_fin: >-
-                            {% set fin_cycle = now().hour * 60 + now().minute + (duree_ce_cycle | int) %}
-                            {% set d = v_heure_debut_min | int %}
-                            {% set f = v_heure_fin_min | int %}
-                            {% if f > d %}
-                              {{ fin_cycle > f }}
-                            {% else %}
-                              {% if now().hour * 60 + now().minute >= d %}
-                                {{ fin_cycle > 1440 + f }}
+                        # Calcul des variables du cycle
+                        - variables:
+                            duree_base_cycle: >-
+                              {% set t = states(v_temp) | float(20) %}
+                              {% if t < v_seuil_bas %}
+                                {{ v_duree_bas | int }}
+                              {% elif t < v_seuil_haut %}
+                                {{ v_duree_moyen | int }}
                               {% else %}
-                                {{ fin_cycle > f }}
+                                {{ v_duree_haut | int }}
                               {% endif %}
-                            {% endif %}
+                            air_time_minutes: >-
+                              {% set diff = (states(v_air_time) | float(0) - states('input_number.spa_snapshot_air_time') | float(0)) * 60 %}
+                              {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
+                            bonus_minutes: >-
+                              {% if air_time_minutes | int >= v_seuil_bonus %}
+                                {{ v_bonus_long | int }}
+                              {% elif air_time_minutes | int >= v_seuil_bonus_court %}
+                                {{ v_bonus_court | int }}
+                              {% else %}
+                                0
+                              {% endif %}
+                            duree_totale_cycle: >-
+                              {% set base = (duree_base_cycle | int / 2) | round(0) | int if v_mode == 'Eco' else duree_base_cycle | int %}
+                              {{ base + (bonus_minutes | int) }}
+                            minutes_filtrees_cycle: >-
+                              {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
+                              {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
+                            minutes_restantes_cycle: >-
+                              {{ [duree_totale_cycle | int - minutes_filtrees_cycle | int, 0] | max }}
+                            cycles_restants: >-
+                              {{ v_nb_cycles | int - repeat.index | int + 1 }}
+                            duree_ce_cycle_brut: >-
+                              {{ 0 if minutes_restantes_cycle <= 0 else (minutes_restantes_cycle / cycles_restants) | round(0) | int }}
+                            duree_ce_cycle: >-
+                              {% if duree_ce_cycle_brut | int == 0 %}
+                                0
+                              {% elif duree_ce_cycle_brut | int < v_duree_min | int %}
+                                {{ v_duree_min | int }}
+                              {% else %}
+                                {{ duree_ce_cycle_brut | int }}
+                              {% endif %}
+                            intervalle_entre_cycles: >-
+                              {% set pause = ((v_plage_minutes | int - duree_totale_cycle | int) / (v_nb_cycles | int)) | round(0) | int %}
+                              {{ [pause, 5] | max }}
+                            depasse_heure_fin: >-
+                              {% set fin_cycle = now().hour * 60 + now().minute + (duree_ce_cycle | int) %}
+                              {% set d = v_heure_debut_min | int %}
+                              {% set f = v_heure_fin_min | int %}
+                              {% if f > d %}
+                                {{ fin_cycle > f }}
+                              {% else %}
+                                {% if now().hour * 60 + now().minute >= d %}
+                                  {{ fin_cycle > 1440 + f }}
+                                {% else %}
+                                  {{ fin_cycle > f }}
+                                {% endif %}
+                              {% endif %}
+                            skip_coupure: >-
+                              {{ states(v_chauffage_bin) == 'on' or states(v_bulles) == 'on' }}
 
-                          # FIX v2.1 : skip_coupure evalue ici, PENDANT un vrai cycle,
-                          # pas au moment du trigger power_on.
-                          # Cela evite le faux positif qui generait "SPA maintenu"
-                          # alors qu'aucun cycle n'avait ete execute.
-                          skip_coupure: >-
-                            {{ states(v_chauffage_bin) == 'on' or states(v_bulles) == 'on' }}
+                        # Mise a jour objectif et bonus
+                        - action: input_number.set_value
+                          target:
+                            entity_id: input_number.spa_duree_objectif
+                          data:
+                            value: "{{ duree_totale_cycle | int }}"
+                        - action: input_number.set_value
+                          target:
+                            entity_id: input_number.spa_bonus_minutes
+                          data:
+                            value: "{{ bonus_minutes | int }}"
 
-                      - action: input_number.set_value
-                        target:
-                          entity_id: input_number.spa_duree_objectif
-                        data:
-                          value: "{{ duree_totale_cycle | int }}"
+                        # Depassement heure de fin
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ depasse_heure_fin }}"
+                              sequence:
+                                - action: notify.persistent_notification
+                                  data:
+                                    title: "SPA — Cycle annule"
+                                    message: "Le cycle {{ repeat.index }}/{{ v_nb_cycles }} depasserait l'heure de fin."
+                                - stop: "Depassement heure de fin"
 
-                      - action: input_number.set_value
-                        target:
-                          entity_id: input_number.spa_bonus_minutes
-                        data:
-                          value: "{{ bonus_minutes | int }}"
-
-                      - if:
-                          conditions:
-                            - condition: template
-                              value_template: "{{ depasse_heure_fin }}"
-                          then:
-                            - action: notify.persistent_notification
-                              data:
-                                title: "SPA — Cycle annule"
-                                message: "Le cycle {{ repeat.index }}/{{ v_nb_cycles }} depasserait l'heure de fin. Session terminee."
-                            - stop: "Depassement heure de fin"
-
-                      - if:
-                          conditions:
-                            - condition: template
-                              value_template: "{{ duree_ce_cycle | int <= 0 }}"
-                          then:
-                            - action: notify.persistent_notification
-                              data:
-                                title: "SPA — Filtration terminee"
-                                message: "Objectif atteint ({{ minutes_filtrees_cycle }}/{{ duree_totale_cycle }} min). Cycles restants annules."
-                            - if:
-                                conditions:
-                                  - condition: state
-                                    entity_id: !input switch_pompe
-                                    state: "on"
-                                  - condition: template
-                                    value_template: "{{ not skip_coupure }}"
-                                then:
-                                  - action: homeassistant.turn_off
-                                    target:
-                                      entity_id: !input switch_pompe
-                                  - delay:
-                                      seconds: 5
-                                  - if:
-                                      conditions:
+                        # Objectif deja atteint
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ duree_ce_cycle | int <= 0 }}"
+                              sequence:
+                                - action: notify.persistent_notification
+                                  data:
+                                    title: "SPA — Filtration terminee"
+                                    message: "Objectif atteint ({{ minutes_filtrees_cycle }}/{{ duree_totale_cycle }} min)."
+                                - choose:
+                                    - conditions:
+                                        - condition: state
+                                          entity_id: !input switch_pompe
+                                          state: "on"
                                         - condition: template
-                                          value_template: "{{ v_autoriser_ext }}"
-                                      then:
-                                        - action: homeassistant.turn_off
-                                          target:
-                                            entity_id: !input switch_power
-                            - stop: "Objectif atteint"
-
-                      - if:
-                          conditions:
-                            - condition: state
-                              entity_id: !input switch_power
-                              state: "off"
-                          then:
-                            - action: homeassistant.turn_on
-                              target:
-                                entity_id: !input switch_power
-                            - delay:
-                                seconds: 3
-
-                      - if:
-                          conditions:
-                            - condition: state
-                              entity_id: !input switch_pompe
-                              state: "off"
-                          then:
-                            - action: homeassistant.turn_on
-                              target:
-                                entity_id: !input switch_pompe
-
-                      - delay:
-                          minutes: "{{ duree_ce_cycle | int }}"
-
-                      - action: input_number.set_value
-                        target:
-                          entity_id: input_number.spa_cycle_en_cours
-                        data:
-                          value: "{{ repeat.index | int }}"
-
-                      - if:
-                          conditions:
-                            - condition: template
-                              value_template: "{{ repeat.index == v_nb_cycles | int }}"
-                          then:
-                            # Dernier cycle
-                            # v2 : reutilise bonus_minutes et air_time_minutes deja calcules
-                            # Pas de recalcul air_time ici => pas de double-comptage
-                            - variables:
-                                minutes_filtrees_final: >-
-                                  {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
-                                  {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
-                                bonus_restant: >-
-                                  {{ [duree_totale_cycle | int - minutes_filtrees_final | int, 0] | max }}
-
-                            - if:
-                                conditions:
-                                  - condition: template
-                                    value_template: "{{ bonus_minutes | int > 0 and bonus_restant | int > 0 and not skip_coupure }}"
-                                then:
-                                  - action: notify.persistent_notification
-                                    data:
-                                      title: "SPA — Cycle bonus en cours"
-                                      message: >-
-                                        Bulles utilisees ({{ air_time_minutes }} min).
-                                        Cycle bonus de {{ bonus_restant }} min en cours.
-                                  - action: homeassistant.turn_on
-                                    target:
-                                      entity_id: !input switch_pompe
-                                  - delay:
-                                      minutes: "{{ bonus_restant | int }}"
-                                  - action: homeassistant.turn_off
-                                    target:
-                                      entity_id: !input switch_pompe
-
-                            - if:
-                                conditions:
-                                  - condition: template
-                                    value_template: "{{ skip_coupure }}"
-                                then:
-                                  - action: notify.persistent_notification
-                                    data:
-                                      title: "SPA — Filtration terminee, SPA maintenu"
-                                      message: >-
-                                        Filtration terminee ({{ duree_totale_cycle }} min).
-                                        Chauffage ou bulles actifs : le SPA reste allume.
-                                        Eteignez-les manuellement pour couper le SPA.
-                                else:
-                                  - if:
-                                      conditions:
-                                        - condition: template
-                                          value_template: "{{ v_autoriser_ext }}"
-                                      then:
-                                        - action: homeassistant.turn_off
-                                          target:
-                                            entity_id: !input switch_pompe
-                                        - delay:
-                                            seconds: 10
-                                        - action: homeassistant.turn_off
-                                          target:
-                                            entity_id: !input switch_power
-
-                            # WATCHDOG v2
-                            - if:
-                                conditions:
-                                  - condition: template
-                                    value_template: "{{ v_watchdog_actif }}"
-                                then:
-                                  - variables:
-                                      minutes_reelles: >-
-                                        {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
-                                        {{ 0 if diff < 0 else diff | round(0) | int }}
-                                      seuil_watchdog: >-
-                                        {{ v_plage_minutes | int + v_watchdog_marge | int }}
-                                  - if:
-                                      conditions:
-                                        - condition: template
-                                          value_template: "{{ minutes_reelles | int > seuil_watchdog | int }}"
-                                      then:
-                                        - action: notify.persistent_notification
-                                          data:
-                                            title: "SPA — Watchdog pompe anormalement longue"
-                                            message: >-
-                                              La pompe a tourne {{ minutes_reelles }} min
-                                              (seuil {{ seuil_watchdog }} min).
-                                              Verifiez l'etat du SPA. Pompe coupee en securite.
+                                          value_template: "{{ not skip_coupure and v_autoriser_ext }}"
+                                      sequence:
                                         - action: homeassistant.turn_off
                                           target:
                                             entity_id: !input switch_pompe
@@ -997,22 +784,151 @@ actions:
                                         - action: homeassistant.turn_off
                                           target:
                                             entity_id: !input switch_power
+                                - stop: "Objectif atteint"
 
-                          else:
-                            # Entre deux cycles
-                            - if:
-                                conditions:
-                                  - condition: template
-                                    value_template: "{{ not skip_coupure and v_autoriser_ext }}"
-                                then:
-                                  - action: homeassistant.turn_off
-                                    target:
-                                      entity_id: !input switch_pompe
-                                  - delay:
-                                      seconds: 5
-                                  - action: homeassistant.turn_off
-                                    target:
-                                      entity_id: !input switch_power
+                        # Demarrage du cycle
+                        - choose:
+                            - conditions:
+                                - condition: state
+                                  entity_id: !input switch_power
+                                  state: "off"
+                              sequence:
+                                - action: homeassistant.turn_on
+                                  target:
+                                    entity_id: !input switch_power
+                                - delay:
+                                    seconds: 3
+                        - choose:
+                            - conditions:
+                                - condition: state
+                                  entity_id: !input switch_pompe
+                                  state: "off"
+                              sequence:
+                                - action: homeassistant.turn_on
+                                  target:
+                                    entity_id: !input switch_pompe
 
+                        # Filtration
+                        - delay:
+                            minutes: "{{ duree_ce_cycle | int }}"
+
+                        # Mise a jour cycle en cours
+                        - action: input_number.set_value
+                          target:
+                            entity_id: input_number.spa_cycle_en_cours
+                          data:
+                            value: "{{ repeat.index | int }}"
+
+                        # ── Fin de cycle : dernier ou intermediaire ──
+                        - choose:
+
+                            # DERNIER CYCLE
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ repeat.index == v_nb_cycles | int }}"
+                              sequence:
+                                # Variables fin de session
+                                - variables:
+                                    minutes_filtrees_final: >-
+                                      {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
+                                      {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
+                                    bonus_restant: >-
+                                      {{ [duree_totale_cycle | int - minutes_filtrees_final | int, 0] | max }}
+
+                                # Cycle bonus si bulles utilisees
+                                - choose:
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ bonus_minutes | int > 0 and bonus_restant | int > 0 and not skip_coupure }}"
+                                      sequence:
+                                        - action: notify.persistent_notification
+                                          data:
+                                            title: "SPA — Cycle bonus en cours"
+                                            message: "Bulles utilisees ({{ air_time_minutes }} min). Cycle bonus de {{ bonus_restant }} min."
+                                        - action: homeassistant.turn_on
+                                          target:
+                                            entity_id: !input switch_pompe
+                                        - delay:
+                                            minutes: "{{ bonus_restant | int }}"
+                                        - action: homeassistant.turn_off
+                                          target:
+                                            entity_id: !input switch_pompe
+
+                                # Coupure finale ou maintien
+                                - choose:
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ skip_coupure }}"
+                                      sequence:
+                                        - action: notify.persistent_notification
+                                          data:
+                                            title: "SPA — Filtration terminee, SPA maintenu"
+                                            message: >-
+                                              Filtration terminee ({{ duree_totale_cycle }} min).
+                                              Chauffage ou bulles actifs : SPA reste allume.
+                                              Eteignez manuellement pour couper.
+                                  default:
+                                    - choose:
+                                        - conditions:
+                                            - condition: template
+                                              value_template: "{{ v_autoriser_ext }}"
+                                          sequence:
+                                            - action: homeassistant.turn_off
+                                              target:
+                                                entity_id: !input switch_pompe
+                                            - delay:
+                                                seconds: 10
+                                            - action: homeassistant.turn_off
+                                              target:
+                                                entity_id: !input switch_power
+
+                                # Watchdog
+                                - choose:
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ v_watchdog_actif }}"
+                                      sequence:
+                                        - variables:
+                                            minutes_reelles: >-
+                                              {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
+                                              {{ 0 if diff < 0 else diff | round(0) | int }}
+                                            seuil_watchdog: >-
+                                              {{ v_plage_minutes | int + v_watchdog_marge | int }}
+                                        - choose:
+                                            - conditions:
+                                                - condition: template
+                                                  value_template: "{{ minutes_reelles | int > seuil_watchdog | int }}"
+                                              sequence:
+                                                - action: notify.persistent_notification
+                                                  data:
+                                                    title: "SPA — Watchdog : pompe anormalement longue"
+                                                    message: >-
+                                                      Pompe active {{ minutes_reelles }} min
+                                                      (seuil {{ seuil_watchdog }} min).
+                                                      Coupure de securite effectuee.
+                                                - action: homeassistant.turn_off
+                                                  target:
+                                                    entity_id: !input switch_pompe
+                                                - delay:
+                                                    seconds: 5
+                                                - action: homeassistant.turn_off
+                                                  target:
+                                                    entity_id: !input switch_power
+
+                          # CYCLE INTERMEDIAIRE
+                          default:
+                            - choose:
+                                - conditions:
+                                    - condition: template
+                                      value_template: "{{ not skip_coupure and v_autoriser_ext }}"
+                                  sequence:
+                                    - action: homeassistant.turn_off
+                                      target:
+                                        entity_id: !input switch_pompe
+                                    - delay:
+                                        seconds: 5
+                                    - action: homeassistant.turn_off
+                                      target:
+                                        entity_id: !input switch_power
                             - delay:
                                 minutes: "{{ intervalle_entre_cycles | int }}"
