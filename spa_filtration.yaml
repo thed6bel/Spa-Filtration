@@ -6,9 +6,11 @@ blueprint:
     plage nocturne, skip coupure si chauffage actif, watchdog securite.
     Blueprint compagnon spa_bulles_auto_off.yaml requis pour coupure bulles auto.
 
-    Corrections v2.4
-    - Notification de demarrage ajoutee au debut de chaque cycle
-    - Reset de spa_snapshot_fait en fin de session (propre pour le lendemain)
+    Corrections v2.5
+    - Variable v_now_min centralisee (calcul heure courant unifie)
+    - Fallback temperature KO : si capteur unavailable, utilise le palier haut (securite)
+    - Parametre notifications_debug on/off : active les notifs de cycle detaillees
+    - Minimum OFF garanti entre cycles (protection pompe et relais)
 
   domain: automation
   homeassistant:
@@ -140,13 +142,27 @@ blueprint:
 
         duree_min_cycle:
           name: "Duree minimum par cycle (minutes)"
-          description: "Protection pompe. Recommande 15 min."
+          description: "Protection pompe : cycle calcule sous ce seuil force a ce minimum. Recommande 15 min."
           default: 15
           selector:
             number:
               min: 5
               max: 30
               step: 5
+              unit_of_measurement: min
+              mode: slider
+
+        pause_min_off:
+          name: "Pause minimum OFF entre cycles (minutes)"
+          description: >-
+            Temps minimum d arret garanti entre deux cycles, meme si l intervalle calcule
+            est plus court. Protege la pompe et les relais. Recommande 5 min.
+          default: 5
+          selector:
+            number:
+              min: 2
+              max: 15
+              step: 1
               unit_of_measurement: min
               mode: slider
 
@@ -258,13 +274,13 @@ blueprint:
               unit_of_measurement: min
               mode: slider
 
-    watchdog:
-      name: "Watchdog securite pompe"
-      icon: mdi:shield-alert-outline
+    options_avancees:
+      name: "Options avancees"
+      icon: mdi:cog-outline
       input:
         watchdog_actif:
           name: "Activer le watchdog"
-          description: "Alerte si pompe ON anormalement longtemps. Recommande activer."
+          description: "Alerte et coupure si pompe ON anormalement longtemps. Recommande activer."
           default: true
           selector:
             boolean:
@@ -280,6 +296,17 @@ blueprint:
               step: 15
               unit_of_measurement: min
               mode: slider
+
+        notifications_debug:
+          name: "Activer les notifications de cycle (mode debug)"
+          description: >-
+            Envoie une notification au debut de chaque cycle avec la duree,
+            l objectif, la temperature et le bonus actif.
+            Utile pour valider le comportement du blueprint.
+            Desactivez en usage quotidien pour eviter le spam.
+          default: true
+          selector:
+            boolean:
 
 mode: queued
 max: 2
@@ -300,6 +327,7 @@ variables:
   v_heure_debut:   !input heure_debut
   v_heure_fin:     !input heure_fin
   v_duree_min:     !input duree_min_cycle
+  v_pause_min_off: !input pause_min_off
   v_seuil_bas:     !input seuil_temp_bas
   v_duree_bas:     !input duree_palier_bas
   v_seuil_haut:    !input seuil_temp_haut
@@ -309,13 +337,15 @@ variables:
   v_seuil_bonus:       !input seuil_bonus_long
   v_bonus_court:       !input bonus_court
   v_bonus_long:        !input bonus_long
-  v_watchdog_actif: !input watchdog_actif
-  v_watchdog_marge: !input watchdog_marge
+  v_watchdog_actif:      !input watchdog_actif
+  v_watchdog_marge:      !input watchdog_marge
+  v_notifications_debug: !input notifications_debug
   v_snapshot_pump: "input_number.spa_snapshot_pump_time"
   v_snapshot_air:  "input_number.spa_snapshot_air_time"
   v_objectif:      "input_number.spa_duree_objectif"
   v_bonus_min:     "input_number.spa_bonus_minutes"
   v_cycle_num:     "input_number.spa_cycle_en_cours"
+
   v_heure_debut_min: >-
     {% set h = v_heure_debut.split(':') %}
     {{ h[0] | int * 60 + h[1] | int }}
@@ -326,6 +356,11 @@ variables:
     {% set d = v_heure_debut_min | int %}
     {% set f = v_heure_fin_min | int %}
     {{ (f - d) if f > d else (1440 - d) + f }}
+
+  # v2.5 — heure courante en minutes, calculee une seule fois au demarrage
+  # evite de repeter now().hour * 60 + now().minute partout dans le code
+  v_now_min: >-
+    {{ now().hour * 60 + now().minute }}
 
 triggers:
   - trigger: time
@@ -459,11 +494,18 @@ actions:
             state: "off"
         sequence:
           - variables:
+              # v2.5 — fallback temperature KO : si unavailable on prend le palier haut
+              temp_retour: >-
+                {% set t = states(v_temp) %}
+                {% if t in ['unknown', 'unavailable'] %}
+                  {{ v_seuil_haut | int }}
+                {% else %}
+                  {{ t | float(v_seuil_haut) }}
+                {% endif %}
               duree_base_retour: >-
-                {% set t = states(v_temp) | float(20) %}
-                {% if t < v_seuil_bas %}
+                {% if temp_retour | float < v_seuil_bas %}
                   {{ v_duree_bas | int }}
-                {% elif t < v_seuil_haut %}
+                {% elif temp_retour | float < v_seuil_haut %}
                   {{ v_duree_moyen | int }}
                 {% else %}
                   {{ v_duree_haut | int }}
@@ -476,8 +518,9 @@ actions:
                 {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
               minutes_restantes_retour: >-
                 {{ [duree_totale_retour | int - minutes_filtrees_retour | int, 0] | max }}
+              # v2.5 — utilise v_now_min pour coherence
               dans_plage_retour: >-
-                {% set n = now().hour * 60 + now().minute %}
+                {% set n = v_now_min | int %}
                 {% set d = v_heure_debut_min | int %}
                 {% set f = v_heure_fin_min | int %}
                 {{ (n >= d and n < f) if f > d else (n >= d or n < f) }}
@@ -672,15 +715,29 @@ actions:
 
                         # Calcul des variables du cycle
                         - variables:
+
+                            # v2.5 — fallback temperature KO
+                            # Si le capteur est unavailable, on prend le palier haut
+                            # pour ne pas sous-filtrer une eau potentiellement chaude
+                            temp_actuelle: >-
+                              {% set t = states(v_temp) %}
+                              {% if t in ['unknown', 'unavailable'] %}
+                                {{ v_seuil_haut | int }}
+                              {% else %}
+                                {{ t | float(v_seuil_haut) }}
+                              {% endif %}
+                            temp_capteur_ko: >-
+                              {{ states(v_temp) in ['unknown', 'unavailable'] }}
+
                             duree_base_cycle: >-
-                              {% set t = states(v_temp) | float(20) %}
-                              {% if t < v_seuil_bas %}
+                              {% if temp_actuelle | float < v_seuil_bas %}
                                 {{ v_duree_bas | int }}
-                              {% elif t < v_seuil_haut %}
+                              {% elif temp_actuelle | float < v_seuil_haut %}
                                 {{ v_duree_moyen | int }}
                               {% else %}
                                 {{ v_duree_haut | int }}
                               {% endif %}
+
                             air_time_minutes: >-
                               {% set diff = (states(v_air_time) | float(0) - states('input_number.spa_snapshot_air_time') | float(0)) * 60 %}
                               {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
@@ -712,22 +769,27 @@ actions:
                               {% else %}
                                 {{ duree_ce_cycle_brut | int }}
                               {% endif %}
+
+                            # v2.5 — intervalle garanti >= v_pause_min_off
                             intervalle_entre_cycles: >-
                               {% set pause = ((v_plage_minutes | int - duree_totale_cycle | int) / (v_nb_cycles | int)) | round(0) | int %}
-                              {{ [pause, 5] | max }}
+                              {{ [pause, v_pause_min_off | int] | max }}
+
+                            # v2.5 — utilise v_now_min pour coherence avec les autres calculs
                             depasse_heure_fin: >-
-                              {% set fin_cycle = now().hour * 60 + now().minute + (duree_ce_cycle | int) %}
+                              {% set fin_cycle = v_now_min | int + (duree_ce_cycle | int) %}
                               {% set d = v_heure_debut_min | int %}
                               {% set f = v_heure_fin_min | int %}
                               {% if f > d %}
                                 {{ fin_cycle > f }}
                               {% else %}
-                                {% if now().hour * 60 + now().minute >= d %}
+                                {% if v_now_min | int >= d %}
                                   {{ fin_cycle > 1440 + f }}
                                 {% else %}
                                   {{ fin_cycle > f }}
                                 {% endif %}
                               {% endif %}
+
                             skip_coupure: >-
                               {{ states(v_chauffage_bin) == 'on' or states(v_bulles) == 'on' }}
 
@@ -741,6 +803,19 @@ actions:
                             entity_id: input_number.spa_bonus_minutes
                           data:
                             value: "{{ bonus_minutes | int }}"
+
+                        # Alerte capteur temperature KO (toujours envoyee, pas liee au debug)
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ temp_capteur_ko }}"
+                              sequence:
+                                - action: notify.persistent_notification
+                                  data:
+                                    title: "SPA — Capteur temperature indisponible"
+                                    message: >-
+                                      Le capteur temperature est KO (unavailable).
+                                      Filtration en mode securite : palier haut ({{ v_duree_haut }} min).
 
                         - choose:
                             - conditions:
@@ -778,23 +853,29 @@ actions:
                                         - action: homeassistant.turn_off
                                           target:
                                             entity_id: !input switch_power
-                                # v2.4 — reset snapshot en fin anticipee
                                 - action: input_boolean.turn_off
                                   target:
                                     entity_id: input_boolean.spa_snapshot_fait
                                 - stop: "Objectif atteint"
 
-                        # ── Notification de demarrage du cycle (v2.4) ──
-                        # Placee apres les verifications mais avant le demarrage physique
-                        - action: notify.persistent_notification
-                          data:
-                            title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} demarre"
-                            message: >-
-                              Duree : {{ duree_ce_cycle }} min.
-                              Objectif session : {{ duree_totale_cycle }} min
-                              ({{ minutes_filtrees_cycle }} min deja filtrees).
-                              Temperature : {{ states(v_temp) }}°C.
-                              {% if bonus_minutes | int > 0 %}Bonus bulles actif : +{{ bonus_minutes }} min.{% endif %}
+                        # ── Notification debug demarrage cycle (v2.5) ──
+                        # Controlee par le parametre notifications_debug du blueprint
+                        # Activee par defaut pour la phase de test, desactivable en production
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ v_notifications_debug }}"
+                              sequence:
+                                - action: notify.persistent_notification
+                                  data:
+                                    title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} demarre"
+                                    message: >-
+                                      Duree : {{ duree_ce_cycle }} min.
+                                      Objectif session : {{ duree_totale_cycle }} min
+                                      ({{ minutes_filtrees_cycle }} min deja filtrees).
+                                      Temperature : {{ temp_actuelle }}°C
+                                      {% if temp_capteur_ko %}(capteur KO — securite){% endif %}.
+                                      {% if bonus_minutes | int > 0 %}Bonus bulles actif : +{{ bonus_minutes }} min.{% endif %}
 
                         # Demarrage physique
                         - choose:
@@ -904,11 +985,7 @@ actions:
                                           Filtration terminee ({{ duree_totale_cycle }} min).
                                           Extinction non autorisee : SPA reste allume.
 
-                                # v2.4 — reset snapshot en fin de session normale
-                                # Permet au trigger power_on de refaire un snapshot propre
-                                # lors du prochain allumage (jour suivant)
-                                # Note : pas de reset a minuit pour ne pas perturber
-                                # les plages nocturnes (ex 22h->6h)
+                                # Reset snapshot — propre pour le lendemain
                                 - action: input_boolean.turn_off
                                   target:
                                     entity_id: input_boolean.spa_snapshot_fait
@@ -961,5 +1038,6 @@ actions:
                                     - action: homeassistant.turn_off
                                       target:
                                         entity_id: !input switch_power
+                            # v2.5 — pause garantie >= v_pause_min_off
                             - delay:
                                 minutes: "{{ intervalle_entre_cycles | int }}"
