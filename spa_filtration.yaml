@@ -6,6 +6,10 @@ blueprint:
     plage nocturne, skip coupure si chauffage actif, watchdog securite.
     Blueprint compagnon spa_bulles_auto_off.yaml requis pour coupure bulles auto.
 
+    Corrections v2.4
+    - Notification de demarrage ajoutee au debut de chaque cycle
+    - Reset de spa_snapshot_fait en fin de session (propre pour le lendemain)
+
   domain: automation
   homeassistant:
     min_version: 2024.8.0
@@ -621,6 +625,7 @@ actions:
                                 et que Home Assistant a ete redemarre.
                           - stop: "Entites manquantes"
 
+                  # Snapshot de session
                   - action: input_number.set_value
                     target:
                       entity_id: input_number.spa_snapshot_pump_time
@@ -640,6 +645,7 @@ actions:
                     data:
                       value: 1
 
+                  # ── BOUCLE CYCLES ──
                   - repeat:
                       count: "{{ v_nb_cycles | int }}"
                       sequence:
@@ -664,6 +670,7 @@ actions:
                                     message: "Connexion perdue au cycle {{ repeat.index }} / {{ v_nb_cycles }}."
                                 - stop: "Connexion perdue"
 
+                        # Calcul des variables du cycle
                         - variables:
                             duree_base_cycle: >-
                               {% set t = states(v_temp) | float(20) %}
@@ -771,8 +778,25 @@ actions:
                                         - action: homeassistant.turn_off
                                           target:
                                             entity_id: !input switch_power
+                                # v2.4 — reset snapshot en fin anticipee
+                                - action: input_boolean.turn_off
+                                  target:
+                                    entity_id: input_boolean.spa_snapshot_fait
                                 - stop: "Objectif atteint"
 
+                        # ── Notification de demarrage du cycle (v2.4) ──
+                        # Placee apres les verifications mais avant le demarrage physique
+                        - action: notify.persistent_notification
+                          data:
+                            title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} demarre"
+                            message: >-
+                              Duree : {{ duree_ce_cycle }} min.
+                              Objectif session : {{ duree_totale_cycle }} min
+                              ({{ minutes_filtrees_cycle }} min deja filtrees).
+                              Temperature : {{ states(v_temp) }}°C.
+                              {% if bonus_minutes | int > 0 %}Bonus bulles actif : +{{ bonus_minutes }} min.{% endif %}
+
+                        # Demarrage physique
                         - choose:
                             - conditions:
                                 - condition: state
@@ -794,6 +818,7 @@ actions:
                                   target:
                                     entity_id: !input switch_pompe
 
+                        # Filtration
                         - delay:
                             minutes: "{{ duree_ce_cycle | int }}"
 
@@ -803,9 +828,10 @@ actions:
                           data:
                             value: "{{ repeat.index | int }}"
 
+                        # ── Fin de cycle ──
                         - choose:
 
-                            # ── DERNIER CYCLE ──
+                            # DERNIER CYCLE
                             - conditions:
                                 - condition: template
                                   value_template: "{{ repeat.index == v_nb_cycles | int }}"
@@ -838,7 +864,6 @@ actions:
 
                                 # Coupure finale
                                 - choose:
-                                    # CAS 1 : chauffage ou bulles actifs — on maintient et on notifie
                                     - conditions:
                                         - condition: template
                                           value_template: "{{ skip_coupure }}"
@@ -851,13 +876,10 @@ actions:
                                               Chauffage ou bulles actifs : SPA reste allume.
                                               Eteignez manuellement pour couper.
 
-                                    # CAS 2 : extinction autorisee — on coupe et on notifie
                                     - conditions:
                                         - condition: template
                                           value_template: "{{ v_autoriser_ext }}"
                                       sequence:
-                                        # FIX v2.3 : notification ajoutee ici — ce chemin etait
-                                        # le seul sans notification en fin de session normale
                                         - action: notify.persistent_notification
                                           data:
                                             title: "SPA — Session terminee"
@@ -874,7 +896,6 @@ actions:
                                           target:
                                             entity_id: !input switch_power
 
-                                  # CAS 3 : extinction non autorisee — on laisse allume, on notifie
                                   default:
                                     - action: notify.persistent_notification
                                       data:
@@ -882,6 +903,15 @@ actions:
                                         message: >-
                                           Filtration terminee ({{ duree_totale_cycle }} min).
                                           Extinction non autorisee : SPA reste allume.
+
+                                # v2.4 — reset snapshot en fin de session normale
+                                # Permet au trigger power_on de refaire un snapshot propre
+                                # lors du prochain allumage (jour suivant)
+                                # Note : pas de reset a minuit pour ne pas perturber
+                                # les plages nocturnes (ex 22h->6h)
+                                - action: input_boolean.turn_off
+                                  target:
+                                    entity_id: input_boolean.spa_snapshot_fait
 
                                 # Watchdog
                                 - choose:
@@ -916,7 +946,7 @@ actions:
                                                   target:
                                                     entity_id: !input switch_power
 
-                          # ── CYCLE INTERMEDIAIRE ──
+                          # CYCLE INTERMEDIAIRE
                           default:
                             - choose:
                                 - conditions:
