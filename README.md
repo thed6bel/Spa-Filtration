@@ -207,20 +207,90 @@ input_button:
 
 ## 📋 Changelog
 
-### v2.0
-- `mode: queued` (était `mode: single`) — les triggers ne sont plus ignorés pendant les delays
-- Coupure bulles extraite en blueprint séparé `spa_bulles_auto_off.yaml` (fiabilité sécurité)
-- Seuil bonus minimum : 10 min (était 2 min) — évite les déclenchements accidentels
-- Durée minimum par cycle : 15 min (configurable) — protection pompe
-- Correction double-comptage du bonus en fin de dernière session
-- Watchdog : alerte + coupure sécurité si pompe ON > plage horaire + marge configurable
 
-### v1.0
-- Version initiale — gestion filtration multi-cycles
-- Plage horaire nocturne
-- Bonus utilisation bulles
-- Rattrapage WiFi
-- Stop d'urgence
+Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
+
+---
+
+## [2.7] - 2026-05-16
+### Added
+- Remplacement de `input_boolean.spa_cycle_actif` par `input_select.spa_state` (idle / filtering / pause / bonus)
+- Persistance de l’état complet après reboot HA
+- Ajout `input_datetime.spa_fin_pause_prevue` pour gestion des pauses
+- Verrou `input_boolean.spa_recovery_running` pour éviter les doubles recoveries
+- Garde-fou “zombie state” avec reset sécurité après reboot prolongé
+
+### Changed
+- Reprise après reboot étendue aux états pause / bonus / filtering
+- Sécurisation des triggers `power_on` et `connexion_retablie`
+
+### Removed
+- `input_boolean.spa_cycle_actif`
+
+---
+
+## [2.6] - 2026-05-15
+### Added
+- Reprise automatique après reboot Home Assistant (cycle / bonus)
+- Snapshot persistant du cycle (`spa_fin_cycle_prevu`)
+- Protection contre conflit de recovery au démarrage
+
+---
+
+## [2.5] - 2026-05-15
+### Added
+- Optimisation logique temps (`v_now_min`)
+- Fallback température capteur KO → mode sécurité (filtration max)
+- Paramètre `pause_min_off` (temps OFF minimum entre cycles)
+- `notifications_debug` activable/désactivable
+
+---
+
+## [2.4] - 2026-05-15
+### Added
+- Notification de début de cycle enrichie
+- Reset automatique du snapshot en fin de session
+
+---
+
+## [2.3] - 2026-05-14
+### Fixed
+- Correction notification de fin de session manquante
+- Clarification logique de coupure SPA
+
+---
+
+## [2.2] - 2026-05-14
+### Fixed
+- Correction erreur blueprint Home Assistant (`choose` requis)
+
+---
+
+## [2.1] - 2026-05-14
+### Fixed
+- Bug critique : pompe non arrêtée après activation manuelle SPA
+- Ajout arrêt explicite dans `power_on`
+
+---
+
+## [2.0] - 2026-05-13
+### Added
+- Mode `queued` (gestion des triggers pendant delays)
+- Séparation du contrôle des bulles en blueprint indépendant
+- Watchdog sécurité pompe
+- Durées minimum cycle + seuil bonus renforcé
+- Fallback température
+- Notifications debug optionnelles
+
+---
+
+## [1.0] - Initial
+### Added
+- Gestion filtration multi-cycles SPA
+- Plages horaires (y compris nocturnes)
+- Bonus bulles
+- Reprise après perte WiFi
+- Stop d’urgence
 
 ---
 
