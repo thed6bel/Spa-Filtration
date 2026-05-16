@@ -212,6 +212,17 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.7.1] 
+### Corrigé
+
+BUG CRITIQUE : TypeError: can't subtract offset-naive and offset-aware datetimes
+as_datetime() sur une valeur de input_datetime retourne un datetime sans
+timezone (naive), alors que now() retourne un datetime avec timezone (aware).
+Python refuse de les soustraire, ce qui faisait planter toute la logique de
+reprise au démarrage de HA.
+Correction : as_local(as_datetime(...)) appliqué aux deux calculs de secondes
+restantes (secondes_fin_cycle et secondes_fin_pause).
+
 ## [2.7]
 ### Added
 - Remplacement de `input_boolean.spa_cycle_actif` par `input_select.spa_state` (idle / filtering / pause / bonus)
