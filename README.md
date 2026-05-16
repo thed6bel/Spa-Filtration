@@ -51,28 +51,24 @@ input_number:
     max: 99999
     step: 0.001
     mode: box
-
   spa_snapshot_air_time:
     name: "SPA — Snapshot bulles"
     min: 0
     max: 99999
     step: 0.001
     mode: box
-
   spa_duree_objectif:
     name: "SPA — Objectif filtration (min)"
     min: 0
     max: 1440
     step: 1
     mode: box
-
   spa_bonus_minutes:
     name: "SPA — Bonus minutes"
     min: 0
     max: 480
     step: 1
     mode: box
-
   spa_cycle_en_cours:
     name: "SPA — Cycle en cours"
     min: 0
@@ -82,18 +78,38 @@ input_number:
 
 input_boolean:
   spa_snapshot_fait:
-    name: "SPA — Snapshot effectué"
-
+    name: "SPA — Snapshot effectue"
   spa_stoppe:
-    name: "SPA — Arrêt d'urgence actif"
+    name: "SPA — Arret urgence actif"
+  spa_recovery_running:       # NOUVEAU v2.7
+    name: "SPA — Recovery en cours"
+
+input_datetime:
+  spa_fin_cycle_prevu:        # NOUVEAU v2.6
+    name: "SPA — Fin de cycle prevue"
+    has_date: true
+    has_time: true
+  spa_fin_pause_prevue:       # NOUVEAU v2.7
+    name: "SPA — Fin de pause prevue"
+    has_date: true
+    has_time: true
+
+input_select:
+  spa_state:                  # NOUVEAU v2.7 — remplace spa_cycle_actif
+    name: "SPA — Etat"
+    options:
+      - idle
+      - filtering
+      - pause
+      - bonus
+    initial: idle
 
 input_button:
   spa_reset:
     name: "SPA — Reset manuel"
     icon: mdi:restart
-
   spa_stop:
-    name: "SPA — Stop d'urgence"
+    name: "SPA — Stop urgence"
     icon: mdi:stop-circle-outline
 ```
 
