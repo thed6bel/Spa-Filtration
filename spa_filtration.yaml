@@ -6,11 +6,15 @@ blueprint:
     plage nocturne, skip coupure si chauffage actif, watchdog securite.
     Blueprint compagnon spa_bulles_auto_off.yaml requis pour coupure bulles auto.
 
-    Corrections v2.7.1
-    - BUG CRITIQUE : TypeError offset-naive vs offset-aware datetimes
-      as_datetime() retourne un datetime sans timezone, now() avec timezone.
-      Correction : as_local(as_datetime()) pour les deux calculs de secondes
-      restantes (fin_cycle et fin_pause).
+    Corrections v2.7.2
+    - BUG : reprise ignoree si reboot survient entre fin de pause et demarrage
+      du cycle suivant. Le state repassait a idle apres le delay de pause mais
+      avant que filtering soit ecrit par le cycle suivant.
+      Correction : suppression du passage a idle en fin de pause. L etat pause
+      est maintenu jusqu au prochain set filtering. La fenetre dangereuse
+      est eliminee.
+    - Cas pause dans recovery renforce : si secondes_fin_pause <= 0 mais
+      que des cycles restent, un cycle de rattrapage est lance immediatement.
 
   domain: automation
   homeassistant:
@@ -476,7 +480,7 @@ actions:
               entity_id: input_boolean.spa_snapshot_fait
 
       # ══════════════════════════════════════════
-      # REPRISE APRES REBOOT HA (v2.7)
+      # REPRISE APRES REBOOT HA
       # ══════════════════════════════════════════
       - conditions:
           - condition: trigger
@@ -502,7 +506,6 @@ actions:
               fin_prevue_str: "{{ states('input_datetime.spa_fin_cycle_prevu') }}"
               fin_pause_str:  "{{ states('input_datetime.spa_fin_pause_prevue') }}"
 
-              # FIX v2.7.1 — as_local() pour convertir naive -> aware avant soustraction
               secondes_fin_cycle: >-
                 {% if fin_prevue_str in ['unknown', 'unavailable'] %}
                   -1
@@ -711,6 +714,8 @@ actions:
                           entity_id: input_boolean.spa_snapshot_fait
 
               # CAS PAUSE — reboot pendant pause inter-cycle
+              # v2.7.2 : etat reste sur "pause" jusqu au prochain set "filtering"
+              # eliminant la fenetre idle entre fin de pause et debut cycle suivant
               - conditions:
                   - condition: template
                     value_template: "{{ etat_au_reboot == 'pause' and not est_zombie }}"
@@ -718,7 +723,17 @@ actions:
                     entity_id: input_boolean.spa_stoppe
                     state: "off"
                 sequence:
+                  - variables:
+                      minutes_filtrees_pause: >-
+                        {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
+                        {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
+                      objectif_pause: >-
+                        {{ states('input_number.spa_duree_objectif') | int(0) }}
+                      restant_apres_pause: >-
+                        {{ [objectif_pause | int - minutes_filtrees_pause | int, 0] | max }}
+
                   - choose:
+                      # Pause encore en cours → on attend la fin de la pause
                       - conditions:
                           - condition: template
                             value_template: "{{ secondes_fin_pause | int > 0 }}"
@@ -745,87 +760,93 @@ actions:
                                       entity_id: !input switch_power
                           - delay:
                               seconds: "{{ [secondes_fin_pause | int, 1] | max }}"
-                          - action: input_select.select_option
-                            target:
-                              entity_id: input_select.spa_state
-                            data:
-                              option: "filtering"
-                          - action: notify.persistent_notification
-                            data:
-                              title: "SPA — Reprise apres pause reboot"
-                              message: "Pause terminee. Demarrage du cycle suivant."
+                          # Pas de passage par idle — on va directement a filtering
+                          # pour eliminer la fenetre dangereuse (fix v2.7.2)
                           - choose:
                               - conditions:
-                                  - condition: state
-                                    entity_id: !input switch_power
-                                    state: "off"
+                                  - condition: template
+                                    value_template: "{{ restant_apres_pause | int > 0 }}"
                                 sequence:
+                                  - action: input_select.select_option
+                                    target:
+                                      entity_id: input_select.spa_state
+                                    data:
+                                      option: "filtering"
+                                  - action: notify.persistent_notification
+                                    data:
+                                      title: "SPA — Reprise apres pause reboot"
+                                      message: "Pause terminee. Demarrage du cycle suivant ({{ restant_apres_pause }} min)."
+                                  - choose:
+                                      - conditions:
+                                          - condition: state
+                                            entity_id: !input switch_power
+                                            state: "off"
+                                        sequence:
+                                          - action: homeassistant.turn_on
+                                            target:
+                                              entity_id: !input switch_power
+                                          - delay:
+                                              seconds: 3
                                   - action: homeassistant.turn_on
                                     target:
-                                      entity_id: !input switch_power
+                                      entity_id: !input switch_pompe
+                                  - action: input_datetime.set_datetime
+                                    target:
+                                      entity_id: input_datetime.spa_fin_cycle_prevu
+                                    data:
+                                      datetime: >-
+                                        {{ (now() + timedelta(minutes=restant_apres_pause | int)).strftime('%Y-%m-%d %H:%M:%S') }}
                                   - delay:
-                                      seconds: 3
-                          - action: homeassistant.turn_on
-                            target:
-                              entity_id: !input switch_pompe
-                          - variables:
-                              minutes_filtrees_reboot: >-
-                                {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
-                                {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
-                              objectif_reboot: >-
-                                {{ states('input_number.spa_duree_objectif') | int(0) }}
-                              restant_reboot: >-
-                                {{ [objectif_reboot | int - minutes_filtrees_reboot | int, v_duree_min | int] | max }}
-                          - action: input_datetime.set_datetime
-                            target:
-                              entity_id: input_datetime.spa_fin_cycle_prevu
-                            data:
-                              datetime: >-
-                                {{ (now() + timedelta(minutes=restant_reboot | int)).strftime('%Y-%m-%d %H:%M:%S') }}
-                          - delay:
-                              minutes: "{{ restant_reboot | int }}"
-                          - action: homeassistant.turn_off
-                            target:
-                              entity_id: !input switch_pompe
-                          - delay:
-                              seconds: 5
-                          - action: homeassistant.turn_off
-                            target:
-                              entity_id: !input switch_power
-                          - action: input_select.select_option
-                            target:
-                              entity_id: input_select.spa_state
-                            data:
-                              option: "idle"
-                          - action: input_boolean.turn_off
-                            target:
-                              entity_id: input_boolean.spa_snapshot_fait
-                          - action: notify.persistent_notification
-                            data:
-                              title: "SPA — Session terminee apres reboot"
-                              message: "Session reprise apres reboot terminee. SPA coupe proprement."
+                                      minutes: "{{ restant_apres_pause | int }}"
+                                  - action: homeassistant.turn_off
+                                    target:
+                                      entity_id: !input switch_pompe
+                                  - delay:
+                                      seconds: 5
+                                  - action: homeassistant.turn_off
+                                    target:
+                                      entity_id: !input switch_power
+                                  - action: input_select.select_option
+                                    target:
+                                      entity_id: input_select.spa_state
+                                    data:
+                                      option: "idle"
+                                  - action: input_boolean.turn_off
+                                    target:
+                                      entity_id: input_boolean.spa_snapshot_fait
+                                  - action: notify.persistent_notification
+                                    data:
+                                      title: "SPA — Session terminee apres reboot"
+                                      message: "Session reprise apres reboot terminee. SPA coupe proprement."
+                            default:
+                              - action: notify.persistent_notification
+                                data:
+                                  title: "SPA — Objectif deja atteint"
+                                  message: "Objectif de filtration deja atteint. Aucun rattrapage necessaire."
+                              - action: input_select.select_option
+                                target:
+                                  entity_id: input_select.spa_state
+                                data:
+                                  option: "idle"
+                              - action: input_boolean.turn_off
+                                target:
+                                  entity_id: input_boolean.spa_snapshot_fait
 
-                    # Pause depassee mais < 2h → cycle de rattrapage direct
+                    # Pause depassee mais < 2h → cycle de rattrapage immediat
+                    # v2.7.2 : cas renforce — couvre le reboot dans la fenetre
+                    # entre fin de pause et debut du cycle suivant
                     default:
-                      - action: notify.persistent_notification
-                        data:
-                          title: "SPA — Reboot : pause depassee"
-                          message: >-
-                            Reboot detecte. La pause inter-cycle est depassee.
-                            Demarrage d un cycle de rattrapage.
-                      - variables:
-                          minutes_filtrees_reboot2: >-
-                            {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
-                            {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
-                          objectif_reboot2: >-
-                            {{ states('input_number.spa_duree_objectif') | int(0) }}
-                          restant_reboot2: >-
-                            {{ [objectif_reboot2 | int - minutes_filtrees_reboot2 | int, 0] | max }}
                       - choose:
                           - conditions:
                               - condition: template
-                                value_template: "{{ restant_reboot2 | int > 0 }}"
+                                value_template: "{{ restant_apres_pause | int > 0 }}"
                             sequence:
+                              - action: notify.persistent_notification
+                                data:
+                                  title: "SPA — Reboot : cycle de rattrapage"
+                                  message: >-
+                                    Reboot detecte. Pause depassee ou fenetre inter-cycle.
+                                    Demarrage immediat du cycle de rattrapage ({{ restant_apres_pause }} min).
                               - action: input_select.select_option
                                 target:
                                   entity_id: input_select.spa_state
@@ -850,9 +871,9 @@ actions:
                                   entity_id: input_datetime.spa_fin_cycle_prevu
                                 data:
                                   datetime: >-
-                                    {{ (now() + timedelta(minutes=restant_reboot2 | int)).strftime('%Y-%m-%d %H:%M:%S') }}
+                                    {{ (now() + timedelta(minutes=restant_apres_pause | int)).strftime('%Y-%m-%d %H:%M:%S') }}
                               - delay:
-                                  minutes: "{{ restant_reboot2 | int }}"
+                                  minutes: "{{ restant_apres_pause | int }}"
                               - action: homeassistant.turn_off
                                 target:
                                   entity_id: !input switch_pompe
@@ -1325,6 +1346,7 @@ actions:
                                   target:
                                     entity_id: !input switch_pompe
 
+                        # Set filtering + heure de fin AVANT le delay
                         - action: input_select.select_option
                           target:
                             entity_id: input_select.spa_state
@@ -1340,6 +1362,7 @@ actions:
                         - delay:
                             minutes: "{{ duree_ce_cycle | int }}"
 
+                        # Cycle termine normalement
                         - action: input_select.select_option
                           target:
                             entity_id: input_select.spa_state
@@ -1478,6 +1501,9 @@ actions:
                                                     entity_id: !input switch_power
 
                           # CYCLE INTERMEDIAIRE
+                          # v2.7.2 : pas de passage par idle apres le delay de pause
+                          # spa_state reste sur "pause" jusqu au prochain set "filtering"
+                          # eliminant la fenetre dangereuse ou un reboot serait ignore
                           default:
                             - choose:
                                 - conditions:
@@ -1508,8 +1534,6 @@ actions:
                             - delay:
                                 minutes: "{{ intervalle_entre_cycles | int }}"
 
-                            - action: input_select.select_option
-                              target:
-                                entity_id: input_select.spa_state
-                              data:
-                                option: "idle"
+                            # FIX v2.7.2 : suppression du passage a idle ici
+                            # Le prochain set "filtering" au debut du cycle suivant
+                            # couvre la transition, sans fenetre dangereuse
