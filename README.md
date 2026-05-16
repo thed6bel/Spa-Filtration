@@ -212,6 +212,18 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.7.2] 
+### fix bug lors du reboot
+
+- BUG : reprise ignoree si reboot survient entre fin de pause et demarrage
+  du cycle suivant. Le state repassait a idle apres le delay de pause mais
+  avant que filtering soit ecrit par le cycle suivant.
+  Correction : suppression du passage a idle en fin de pause. L etat pause
+  est maintenu jusqu au prochain set filtering. La fenetre dangereuse
+  est eliminee.
+- Cas pause dans recovery renforce : si secondes_fin_pause <= 0 mais
+  que des cycles restent, un cycle de rattrapage est lance immediatement.
+    
 ## [2.7.1] 
 ### Corrigé
 
