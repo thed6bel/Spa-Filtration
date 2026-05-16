@@ -212,7 +212,7 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
-## [2.7] - 2026-05-16
+## [2.7]
 ### Added
 - Remplacement de `input_boolean.spa_cycle_actif` par `input_select.spa_state` (idle / filtering / pause / bonus)
 - Persistance de l’état complet après reboot HA
@@ -229,7 +229,7 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
-## [2.6] - 2026-05-15
+## [2.6]
 ### Added
 - Reprise automatique après reboot Home Assistant (cycle / bonus)
 - Snapshot persistant du cycle (`spa_fin_cycle_prevu`)
@@ -237,7 +237,7 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
-## [2.5] - 2026-05-15
+## [2.5]
 ### Added
 - Optimisation logique temps (`v_now_min`)
 - Fallback température capteur KO → mode sécurité (filtration max)
@@ -246,34 +246,34 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
-## [2.4] - 2026-05-15
+## [2.4]
 ### Added
 - Notification de début de cycle enrichie
 - Reset automatique du snapshot en fin de session
 
 ---
 
-## [2.3] - 2026-05-14
+## [2.3]
 ### Fixed
 - Correction notification de fin de session manquante
 - Clarification logique de coupure SPA
 
 ---
 
-## [2.2] - 2026-05-14
+## [2.2]
 ### Fixed
 - Correction erreur blueprint Home Assistant (`choose` requis)
 
 ---
 
-## [2.1] - 2026-05-14
+## [2.1]
 ### Fixed
 - Bug critique : pompe non arrêtée après activation manuelle SPA
 - Ajout arrêt explicite dans `power_on`
 
 ---
 
-## [2.0] - 2026-05-13
+## [2.0]
 ### Added
 - Mode `queued` (gestion des triggers pendant delays)
 - Séparation du contrôle des bulles en blueprint indépendant
