@@ -212,6 +212,24 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.7.3] 
+### fix bug lors du reboot
+
+Corrections v2.7.3
+- BUG DEFINITIF resolu : etat_au_reboot toujours idle meme pendant la pause.
+  Cause racine : le passage a idle en fin de pause etait encore present dans
+  le code malgre le fix v2.7.2. Supprime definitivement.
+- Ajout de input_number.spa_cycles_restants : persiste le nombre de cycles
+  restants a executer. Permet une recovery robuste sans dependre uniquement
+  du spa_state. Mis a jour avant chaque cycle, decrement apres chaque cycle.
+- Recovery pause : utilise spa_cycles_restants pour savoir combien de cycles
+  lancer apres la pause, meme si spa_state etait idle au reboot.
+- Le spa_state reste sur pause jusqu a ce que le cycle suivant set filtering.
+  Aucun passage par idle entre fin de pause et debut du cycle suivant.
+
+Nouvelle entite requise dans configuration.yaml
+  input_number.spa_cycles_restants
+
 ## [2.7.2] 
 ### fix bug lors du reboot
 
