@@ -212,6 +212,19 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.7.4] 
+### fix bug lors du reboot
+
+Corrections v2.7.4
+- BUG : spa_fin_pause_prevue ecrite APRES spa_state=pause. Si reboot entre
+  les deux, la datetime etait invalide (-1) et le blueprint lancait
+  immediatement le cycle suivant sans respecter la pause.
+  Correction : spa_fin_pause_prevue ecrite EN PREMIER, avant spa_state=pause.
+- Recovery pause avec datetime invalide (-1) : applique v_pause_min_off
+  comme delai minimal plutot que de lancer immediatement.
+- Meme correction appliquee a spa_fin_cycle_prevu : datetime ecrite avant
+  spa_state=filtering pour la meme raison.
+
 ## [2.7.3] 
 ### fix bug lors du reboot
 
