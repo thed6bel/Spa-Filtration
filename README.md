@@ -212,10 +212,24 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.7.5] 
+### fix bug lors du reboot
+
+- BUG FONDAMENTAL resolu : spa_fin_pause_prevue et spa_fin_cycle_prevu
+  pouvaient contenir des valeurs perimees d une session precedente.
+  Le blueprint calculait secondes_fin_pause < -7200 = false donc
+  tombait dans le cas "pause depassee" et relancait immediatement.
+- Ajout de input_number.spa_session_start : timestamp Unix du debut
+  de session. Ecrit au demarrage de chaque session.
+- Toute datetime de pause ou de cycle est consideree valide UNIQUEMENT
+  si elle est posterieure au debut de la session courante.
+  Une valeur perimee est donc systematiquement ignoree.
+- Reset de spa_fin_pause_prevue et spa_fin_cycle_prevu au debut de
+  chaque session pour eliminer les vieilles valeurs.
+
 ## [2.7.4] 
 ### fix bug lors du reboot
 
-Corrections v2.7.4
 - BUG : spa_fin_pause_prevue ecrite APRES spa_state=pause. Si reboot entre
   les deux, la datetime etait invalide (-1) et le blueprint lancait
   immediatement le cycle suivant sans respecter la pause.
@@ -228,7 +242,6 @@ Corrections v2.7.4
 ## [2.7.3] 
 ### fix bug lors du reboot
 
-Corrections v2.7.3
 - BUG DEFINITIF resolu : etat_au_reboot toujours idle meme pendant la pause.
   Cause racine : le passage a idle en fin de pause etait encore present dans
   le code malgre le fix v2.7.2. Supprime definitivement.
