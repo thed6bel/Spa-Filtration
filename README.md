@@ -212,6 +212,25 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.7.6] 
+### fix bug lors du reboot
+
+- Remplacement de toute la logique de recovery complexe (datetimes, timestamps,
+  fenetre inter-cycle, spa_state, spa_cycles_restants, spa_session_start)
+  par une approche simple et fiable.
+- Au demarrage HA : si on est dans la plage horaire ET qu une session etait
+  active (spa_snapshot_fait=on), on coupe la pompe proprement, on attend
+  pause_min_off minutes, puis on relance un cycle de rattrapage base sur
+  les minutes reellement filtrees (pump_time - snapshot).
+- Suppression des entites devenues inutiles :
+    input_number.spa_cycles_restants
+    input_number.spa_session_start
+    input_datetime.spa_fin_cycle_prevu
+    input_datetime.spa_fin_pause_prevue
+  Ces entites peuvent etre supprimees de configuration.yaml.
+- spa_state conserve (idle/filtering/pause/bonus) car utile pour le dashboard.
+- Une seule instance de recovery possible grace au verrou spa_recovery_running.
+
 ## [2.7.5] 
 ### fix bug lors du reboot
 
