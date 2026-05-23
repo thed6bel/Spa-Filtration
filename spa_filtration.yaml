@@ -581,7 +581,7 @@ actions:
                       # Il reste des minutes significatives a filtrer → cycles de rattrapage
                       - conditions:
                           - condition: template
-                            value_template: "{{ restant_reboot | int >= v_duree_min | int }}"
+                            value_template: "{{ restant_reboot | int > 0 }}"
                         sequence:
                           - action: notify.persistent_notification
                             data:
