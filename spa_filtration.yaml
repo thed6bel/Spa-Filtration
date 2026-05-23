@@ -456,6 +456,8 @@ actions:
 
       # ══════════════════════════════════════════
       # POWER ON — snapshot de secours UNIQUEMENT
+      # Ne s execute PAS si HA vient de redemarrer
+      # (ha_reboot_pending protege le snapshot existant)
       # ══════════════════════════════════════════
       - conditions:
           - condition: trigger
@@ -466,6 +468,12 @@ actions:
           - condition: state
             entity_id: input_boolean.spa_recovery_running
             state: "off"
+          # Bloquer si HA vient juste de redémarrer (fenêtre de 120 secondes)
+          - condition: template
+            value_template: >-
+              {{ (as_timestamp(now()) - as_timestamp(states.homeassistant.start_time | default(now()))) > 120
+                 if states.homeassistant is defined
+                 else true }}
         sequence:
           - action: input_number.set_value
             target:
@@ -482,31 +490,25 @@ actions:
               entity_id: input_boolean.spa_snapshot_fait
 
       # ══════════════════════════════════════════
-      # REPRISE APRES REBOOT HA (v2.7.7)
+      # REPRISE APRES REBOOT HA (v2.8.0)
       # Recalcul des cycles restants + repartition
-      # sur la plage horaire restante
+      # sur la plage horaire restante.
+      # Le verrou spa_recovery_running est pose
+      # AVANT le delai de 30s pour bloquer power_on.
       # ══════════════════════════════════════════
       - conditions:
           - condition: trigger
             id: ha_start
         sequence:
-          # Attendre que tous les capteurs soient charges
-          - delay:
-              seconds: 30
-
-          # Verrou anti-double-recovery
-          - choose:
-              - conditions:
-                  - condition: state
-                    entity_id: input_boolean.spa_recovery_running
-                    state: "on"
-                sequence:
-                  - stop: "Recovery deja en cours"
-
-          # Poser le verrou immediatement
+          # Poser le verrou IMMEDIATEMENT (avant tout délai)
+          # pour bloquer le trigger power_on qui arrive en même temps
           - action: input_boolean.turn_on
             target:
               entity_id: input_boolean.spa_recovery_running
+
+          # Attendre que tous les capteurs soient charges
+          - delay:
+              seconds: 30
 
           # Couper la pompe dans tous les cas au demarrage
           - action: homeassistant.turn_off
