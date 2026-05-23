@@ -212,6 +212,17 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.7.7] 
+### Corrections v2.7.7
+
+- Recovery apres reboot : au lieu d un seul bloc "rattrapage",
+  recalcul des cycles restants (via spa_cycle_en_cours) et repartition
+  des minutes restantes sur ces cycles avec intervalles proportionnels.
+  Exemple : 2 cycles restants sur 60 min objectif, 30 min filtrees →
+  2 cycles de 15 min chacun avec intervalle calcule sur la plage restante.
+- Recalcul en temps reel au debut de chaque cycle de rattrapage pour
+  absorber les ecarts (comme la boucle principale).
+
 ## [2.7.6] 
 ### fix bug lors du reboot
 
