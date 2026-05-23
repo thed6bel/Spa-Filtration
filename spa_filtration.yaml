@@ -6,22 +6,14 @@ blueprint:
     plage nocturne, skip coupure si chauffage actif, watchdog securite.
     Blueprint compagnon spa_bulles_auto_off.yaml requis pour coupure bulles auto.
 
-    Corrections v2.7.6
-    - Remplacement de toute la logique de recovery complexe (datetimes, timestamps,
-      fenetre inter-cycle, spa_state, spa_cycles_restants, spa_session_start)
-      par une approche simple et fiable.
-    - Au demarrage HA : si on est dans la plage horaire ET qu une session etait
-      active (spa_snapshot_fait=on), on coupe la pompe proprement, on attend
-      pause_min_off minutes, puis on relance un cycle de rattrapage base sur
-      les minutes reellement filtrees (pump_time - snapshot).
-    - Suppression des entites devenues inutiles :
-        input_number.spa_cycles_restants
-        input_number.spa_session_start
-        input_datetime.spa_fin_cycle_prevu
-        input_datetime.spa_fin_pause_prevue
-      Ces entites peuvent etre supprimees de configuration.yaml.
-    - spa_state conserve (idle/filtering/pause/bonus) car utile pour le dashboard.
-    - Une seule instance de recovery possible grace au verrou spa_recovery_running.
+    Corrections v2.7.7
+    - Recovery apres reboot : au lieu d un seul bloc "rattrapage",
+      recalcul des cycles restants (via spa_cycle_en_cours) et repartition
+      des minutes restantes sur ces cycles avec intervalles proportionnels.
+      Exemple : 2 cycles restants sur 60 min objectif, 30 min filtrees →
+      2 cycles de 15 min chacun avec intervalle calcule sur la plage restante.
+    - Recalcul en temps reel au debut de chaque cycle de rattrapage pour
+      absorber les ecarts (comme la boucle principale).
 
   domain: automation
   homeassistant:
@@ -490,9 +482,9 @@ actions:
               entity_id: input_boolean.spa_snapshot_fait
 
       # ══════════════════════════════════════════
-      # REPRISE APRES REBOOT HA (v2.7.6)
-      # Approche simple : si dans la plage ET session active
-      # → couper proprement, pause, relancer un cycle de rattrapage
+      # REPRISE APRES REBOOT HA (v2.7.7)
+      # Recalcul des cycles restants + repartition
+      # sur la plage horaire restante
       # ══════════════════════════════════════════
       - conditions:
           - condition: trigger
@@ -517,7 +509,6 @@ actions:
               entity_id: input_boolean.spa_recovery_running
 
           # Couper la pompe dans tous les cas au demarrage
-          # pour eviter qu elle reste allumee sans supervision
           - action: homeassistant.turn_off
             target:
               entity_id: !input switch_pompe
@@ -556,9 +547,36 @@ actions:
                       # Minutes restantes a filtrer
                       restant_reboot: >-
                         {{ [objectif_reboot | int - minutes_filtrees_reboot | int, 0] | max }}
+                      # Cycles deja effectues (spa_cycle_en_cours vaut 1 apres le 1er cycle, etc.)
+                      cycles_deja_faits_reboot: >-
+                        {{ [states('input_number.spa_cycle_en_cours') | int(0), 0] | max }}
+                      # Cycles restants a executer (minimum 1)
+                      cycles_restants_reboot: >-
+                        {{ [v_nb_cycles | int - cycles_deja_faits_reboot | int, 1] | max }}
+                      # Temps restant dans la plage horaire (en minutes)
+                      plage_restante_reboot: >-
+                        {% set n = now().hour * 60 + now().minute %}
+                        {% set d = v_heure_debut_min | int %}
+                        {% set f = v_heure_fin_min | int %}
+                        {% if f > d %}
+                          {{ [f - n, 0] | max }}
+                        {% else %}
+                          {% if n >= d %}
+                            {{ [1440 - n + f, 0] | max }}
+                          {% else %}
+                            {{ [f - n, 0] | max }}
+                          {% endif %}
+                        {% endif %}
+                      # Duree de base par cycle de rattrapage
+                      duree_par_cycle_reboot: >-
+                        {{ [restant_reboot | int // cycles_restants_reboot | int, v_duree_min | int] | max }}
+                      # Intervalle entre les cycles de rattrapage (proportionnel a la plage restante)
+                      intervalle_reboot: >-
+                        {% set pause = ((plage_restante_reboot | int - restant_reboot | int) / (cycles_restants_reboot | int)) | round(0) | int %}
+                        {{ [pause, v_pause_min_off | int] | max }}
 
                   - choose:
-                      # Il reste des minutes a filtrer → cycle de rattrapage
+                      # Il reste des minutes significatives a filtrer → cycles de rattrapage
                       - conditions:
                           - condition: template
                             value_template: "{{ restant_reboot | int >= v_duree_min | int }}"
@@ -569,33 +587,140 @@ actions:
                               message: >-
                                 HA a redémarre pendant une session de filtration.
                                 {{ minutes_filtrees_reboot }} min filtrees sur {{ objectif_reboot }} min.
-                                Cycle de rattrapage : {{ restant_reboot }} min.
+                                Rattrapage : {{ restant_reboot }} min en {{ cycles_restants_reboot }} cycle(s).
+                                Duree par cycle : {{ duree_par_cycle_reboot }} min.
+                                Intervalle entre cycles : {{ intervalle_reboot }} min.
                                 Demarrage dans {{ v_pause_min_off }} min (pause securite).
+
                           # Pause de securite avant de relancer la pompe
                           - delay:
                               minutes: "{{ v_pause_min_off | int }}"
-                          # Relancer la pompe pour les minutes restantes
-                          - action: input_select.select_option
-                            target:
-                              entity_id: input_select.spa_state
-                            data:
-                              option: "filtering"
-                          - choose:
-                              - conditions:
-                                  - condition: state
-                                    entity_id: !input switch_power
-                                    state: "off"
-                                sequence:
-                                  - action: homeassistant.turn_on
-                                    target:
-                                      entity_id: !input switch_power
-                                  - delay:
-                                      seconds: 3
-                          - action: homeassistant.turn_on
-                            target:
-                              entity_id: !input switch_pompe
-                          - delay:
-                              minutes: "{{ restant_reboot | int }}"
+
+                          # ── BOUCLE DE RATTRAPAGE ──
+                          - repeat:
+                              count: "{{ cycles_restants_reboot | int }}"
+                              sequence:
+
+                                # Stop urgence ?
+                                - choose:
+                                    - conditions:
+                                        - condition: state
+                                          entity_id: input_boolean.spa_stoppe
+                                          state: "on"
+                                      sequence:
+                                        - stop: "STOP urgence actif pendant recovery"
+
+                                # Recalcul en temps reel au debut de chaque cycle
+                                - variables:
+                                    minutes_filtrees_now_reboot: >-
+                                      {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
+                                      {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
+                                    restant_now_reboot: >-
+                                      {{ [objectif_reboot | int - minutes_filtrees_now_reboot | int, 0] | max }}
+                                    cycles_restants_now_reboot: >-
+                                      {{ cycles_restants_reboot | int - repeat.index | int + 1 }}
+                                    duree_ce_cycle_reboot: >-
+                                      {% set nb = cycles_restants_now_reboot | int %}
+                                      {% set brut = (restant_now_reboot | int // nb) if nb > 0 else restant_now_reboot | int %}
+                                      {{ [brut, v_duree_min | int] | max if restant_now_reboot | int > 0 else 0 }}
+                                    dans_plage_now_reboot: >-
+                                      {% set n = now().hour * 60 + now().minute %}
+                                      {% set d = v_heure_debut_min | int %}
+                                      {% set f = v_heure_fin_min | int %}
+                                      {{ (n >= d and n < f) if f > d else (n >= d or n < f) }}
+
+                                # Verifications avant de demarrer le cycle
+                                - choose:
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ not dans_plage_now_reboot }}"
+                                      sequence:
+                                        - action: notify.persistent_notification
+                                          data:
+                                            title: "SPA — Recovery : hors plage"
+                                            message: "Hors plage horaire pendant le rattrapage. Arret."
+                                        - stop: "Hors plage pendant recovery"
+
+                                - choose:
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ duree_ce_cycle_reboot | int <= 0 }}"
+                                      sequence:
+                                        - action: notify.persistent_notification
+                                          data:
+                                            title: "SPA — Recovery : objectif atteint"
+                                            message: "Objectif de filtration atteint pendant le rattrapage."
+                                        - stop: "Objectif atteint pendant recovery"
+
+                                - action: notify.persistent_notification
+                                  data:
+                                    title: "SPA — Recovery cycle {{ repeat.index }}/{{ cycles_restants_reboot }}"
+                                    message: >-
+                                      Cycle de rattrapage {{ repeat.index }}/{{ cycles_restants_reboot }}.
+                                      Duree : {{ duree_ce_cycle_reboot }} min.
+                                      Objectif : {{ objectif_reboot }} min
+                                      ({{ minutes_filtrees_now_reboot }} min deja filtrees).
+
+                                # Demarrage physique
+                                - choose:
+                                    - conditions:
+                                        - condition: state
+                                          entity_id: !input switch_power
+                                          state: "off"
+                                      sequence:
+                                        - action: homeassistant.turn_on
+                                          target:
+                                            entity_id: !input switch_power
+                                        - delay:
+                                            seconds: 3
+
+                                - action: homeassistant.turn_on
+                                  target:
+                                    entity_id: !input switch_pompe
+
+                                - action: input_select.select_option
+                                  target:
+                                    entity_id: input_select.spa_state
+                                  data:
+                                    option: "filtering"
+
+                                - delay:
+                                    minutes: "{{ duree_ce_cycle_reboot | int }}"
+
+                                - action: input_select.select_option
+                                  target:
+                                    entity_id: input_select.spa_state
+                                  data:
+                                    option: "idle"
+
+                                # Entre les cycles : coupure + pause (sauf apres le dernier)
+                                - choose:
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ repeat.index < cycles_restants_reboot | int }}"
+                                      sequence:
+                                        - choose:
+                                            - conditions:
+                                                - condition: template
+                                                  value_template: "{{ v_autoriser_ext }}"
+                                              sequence:
+                                                - action: homeassistant.turn_off
+                                                  target:
+                                                    entity_id: !input switch_pompe
+                                                - delay:
+                                                    seconds: 5
+                                                - action: homeassistant.turn_off
+                                                  target:
+                                                    entity_id: !input switch_power
+                                        - action: input_select.select_option
+                                          target:
+                                            entity_id: input_select.spa_state
+                                          data:
+                                            option: "pause"
+                                        - delay:
+                                            minutes: "{{ intervalle_reboot | int }}"
+
+                          # Fin de tous les cycles de rattrapage
                           - action: homeassistant.turn_off
                             target:
                               entity_id: !input switch_pompe
@@ -615,7 +740,8 @@ actions:
                           - action: notify.persistent_notification
                             data:
                               title: "SPA — Rattrapage reboot termine"
-                              message: "Cycle de rattrapage termine. SPA coupe proprement."
+                              message: "Tous les cycles de rattrapage sont termines. SPA coupe proprement."
+
                     default:
                       # Objectif deja atteint ou presque → on ne relance pas
                       - action: notify.persistent_notification
