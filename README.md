@@ -212,6 +212,37 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.8.2] 
+### Corrections v2.8.2
+- Recovery : coupure finale conditionnelle (comme boucle principale).
+  Bug : le blueprint coupait pompe et power inconditionnellement en fin de recovery,
+  sans verifier si le chauffage ou les bulles etaient actifs (variable skip_coupure
+  inexistante dans le recovery). Ajout de skip_coupure_reboot avant la coupure finale.
+
+## [2.8.1] 
+### Corrections v2.8.1
+- Condition entree recovery changee de restant >= v_duree_min a restant > 0.
+  Bug : 14 min restantes avec duree_min=15 declenchait "objectif deja atteint"
+  alors que duree_par_cycle_reboot applique deja le minimum via | max v_duree_min.
+
+## [2.8.0] 
+### Corrections v2.8.0
+- ha_start pose spa_recovery_running=ON immediatement (avant le delai de 30s)
+  pour bloquer le trigger power_on qui se declenche en meme temps au reboot
+  et qui ecrasait le snapshot existant (bug : minutes_filtrees = 0).
+- power_on : condition supplementaire fenetre 120s apres demarrage HA
+  comme filet de securite supplementaire.
+
+## [2.7.8] 
+### Corrections v2.7.8
+- Recovery apres reboot : au lieu d un seul bloc "rattrapage",
+  recalcul des cycles restants (via spa_cycle_en_cours) et repartition
+  des minutes restantes sur ces cycles avec intervalles proportionnels.
+  Exemple : 2 cycles restants sur 60 min objectif, 30 min filtrees
+  2 cycles de 15 min chacun avec intervalle calcule sur la plage restante.
+- Recalcul en temps reel au debut de chaque cycle de rattrapage pour
+  absorber les ecarts (comme la boucle principale).
+
 ## [2.7.7] 
 ### Corrections v2.7.7
 
