@@ -212,6 +212,21 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.9.0] 
+### Corrections v2.9.0
+- power_on : suppression condition as_timestamp(homeassistant.start_time) qui
+  causait ValueError (start_time=None) sur certaines versions HA. Le verrou
+  spa_recovery_running pose par ha_start suffit a bloquer power_on au reboot.
+- Watchdog : ne coupe plus la pompe si le chauffage est actif. Envoie une
+  notification d alerte a la place (pompe necessaire pour chauffer l eau).
+- Watchdog : marge max augmentee de 180 a 720 min pour supporter les sessions
+  de chauffage longues (peut tourner 12h+ sans probleme).
+- NOUVEAU : cycle bonus bulles hors plage horaire. Si les bulles sont utilisees
+  en dehors de la plage de filtration, un cycle bonus independant est lance
+  apres leur arret (configurable, actif par defaut).
+- NOUVEAU : notification de statistiques quotidiennes a heure configurable.
+  Bilan : filtration totale, bulles, temperature, mode, cycles, connexion.
+
 ## [2.8.2] 
 ### Corrections v2.8.2
 - Recovery : coupure finale conditionnelle (comme boucle principale).
