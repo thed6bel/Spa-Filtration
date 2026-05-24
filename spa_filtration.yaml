@@ -10,10 +10,28 @@ blueprint:
     - Recovery apres reboot : au lieu d un seul bloc "rattrapage",
       recalcul des cycles restants (via spa_cycle_en_cours) et repartition
       des minutes restantes sur ces cycles avec intervalles proportionnels.
-      Exemple : 2 cycles restants sur 60 min objectif, 30 min filtrees →
+      Exemple : 2 cycles restants sur 60 min objectif, 30 min filtrees
       2 cycles de 15 min chacun avec intervalle calcule sur la plage restante.
     - Recalcul en temps reel au debut de chaque cycle de rattrapage pour
       absorber les ecarts (comme la boucle principale).
+
+    Corrections v2.8.0
+    - ha_start pose spa_recovery_running=ON immediatement (avant le delai de 30s)
+      pour bloquer le trigger power_on qui se declenche en meme temps au reboot
+      et qui ecrasait le snapshot existant (bug : minutes_filtrees = 0).
+    - power_on : condition supplementaire fenetre 120s apres demarrage HA
+      comme filet de securite supplementaire.
+
+    Corrections v2.8.1
+    - Condition entree recovery changee de restant >= v_duree_min a restant > 0.
+      Bug : 14 min restantes avec duree_min=15 declenchait "objectif deja atteint"
+      alors que duree_par_cycle_reboot applique deja le minimum via | max v_duree_min.
+
+    Corrections v2.8.2
+    - Recovery : coupure finale conditionnelle (comme boucle principale).
+      Bug : le blueprint coupait pompe et power inconditionnellement en fin de recovery,
+      sans verifier si le chauffage ou les bulles etaient actifs (variable skip_coupure
+      inexistante dans le recovery). Ajout de skip_coupure_reboot avant la coupure finale.
 
   domain: automation
   homeassistant:
@@ -723,14 +741,45 @@ actions:
                                             minutes: "{{ intervalle_reboot | int }}"
 
                           # Fin de tous les cycles de rattrapage
-                          - action: homeassistant.turn_off
-                            target:
-                              entity_id: !input switch_pompe
-                          - delay:
-                              seconds: 5
-                          - action: homeassistant.turn_off
-                            target:
-                              entity_id: !input switch_power
+                          # Verifier chauffage/bulles avant coupure (comme boucle principale)
+                          - variables:
+                              skip_coupure_reboot: >-
+                                {{ states(v_chauffage_bin) == 'on' or states(v_bulles) == 'on' }}
+
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ skip_coupure_reboot }}"
+                                sequence:
+                                  - action: notify.persistent_notification
+                                    data:
+                                      title: "SPA — Rattrapage reboot termine (SPA maintenu)"
+                                      message: >-
+                                        Cycles de rattrapage termines.
+                                        Chauffage ou bulles actifs : pompe et SPA maintenus allumes.
+                                        Eteignez manuellement pour couper.
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ v_autoriser_ext }}"
+                                sequence:
+                                  - action: homeassistant.turn_off
+                                    target:
+                                      entity_id: !input switch_pompe
+                                  - delay:
+                                      seconds: 5
+                                  - action: homeassistant.turn_off
+                                    target:
+                                      entity_id: !input switch_power
+                                  - action: notify.persistent_notification
+                                    data:
+                                      title: "SPA — Rattrapage reboot termine"
+                                      message: "Tous les cycles de rattrapage sont termines. SPA coupe proprement."
+                            default:
+                              - action: notify.persistent_notification
+                                data:
+                                  title: "SPA — Rattrapage reboot termine (SPA maintenu)"
+                                  message: "Cycles termines. Extinction non autorisee : SPA reste allume."
+
                           - action: input_select.select_option
                             target:
                               entity_id: input_select.spa_state
@@ -739,10 +788,6 @@ actions:
                           - action: input_boolean.turn_off
                             target:
                               entity_id: input_boolean.spa_snapshot_fait
-                          - action: notify.persistent_notification
-                            data:
-                              title: "SPA — Rattrapage reboot termine"
-                              message: "Tous les cycles de rattrapage sont termines. SPA coupe proprement."
 
                     default:
                       # Objectif deja atteint ou presque → on ne relance pas
