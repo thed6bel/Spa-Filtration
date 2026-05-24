@@ -33,6 +33,20 @@ blueprint:
       sans verifier si le chauffage ou les bulles etaient actifs (variable skip_coupure
       inexistante dans le recovery). Ajout de skip_coupure_reboot avant la coupure finale.
 
+    Corrections v2.9.0
+    - power_on : suppression condition as_timestamp(homeassistant.start_time) qui
+      causait ValueError (start_time=None) sur certaines versions HA. Le verrou
+      spa_recovery_running pose par ha_start suffit a bloquer power_on au reboot.
+    - Watchdog : ne coupe plus la pompe si le chauffage est actif. Envoie une
+      notification d alerte a la place (pompe necessaire pour chauffer l eau).
+    - Watchdog : marge max augmentee de 180 a 720 min pour supporter les sessions
+      de chauffage longues (peut tourner 12h+ sans probleme).
+    - NOUVEAU : cycle bonus bulles hors plage horaire. Si les bulles sont utilisees
+      en dehors de la plage de filtration, un cycle bonus independant est lance
+      apres leur arret (configurable, actif par defaut).
+    - NOUVEAU : notification de statistiques quotidiennes a heure configurable.
+      Bilan : filtration totale, bulles, temperature, mode, cycles, connexion.
+
   domain: automation
   homeassistant:
     min_version: 2024.8.0
@@ -311,7 +325,7 @@ blueprint:
           selector:
             number:
               min: 15
-              max: 180
+              max: 720
               step: 15
               unit_of_measurement: min
               mode: slider
@@ -322,6 +336,33 @@ blueprint:
             Envoie une notification au debut de chaque cycle avec duree, objectif,
             temperature et bonus. Utile pour valider le blueprint.
             Desactivez en usage quotidien.
+          default: true
+          selector:
+            boolean:
+
+        notifications_stats:
+          name: "Activer les notifications de statistiques quotidiennes"
+          description: >-
+            Envoie une notification de bilan quotidien a l heure configuree
+            (voir heure_stats). Inclut : filtration totale, temps chauffage,
+            temps bulles, plage de temperature.
+          default: true
+          selector:
+            boolean:
+
+        heure_stats:
+          name: "Heure du bilan quotidien"
+          description: "Heure a laquelle la notification de statistiques est envoyee."
+          default: "23:00:00"
+          selector:
+            time:
+
+        bonus_hors_plage_actif:
+          name: "Activer le cycle bonus bulles hors plage horaire"
+          description: >-
+            Si les bulles sont utilisees EN DEHORS de la plage de filtration,
+            lancer un cycle de filtration bonus independant apres leur arret.
+            Duree = bonus_long ou bonus_court selon la duree de la session.
           default: true
           selector:
             boolean:
@@ -424,6 +465,10 @@ triggers:
     event: start
     id: ha_start
 
+  - trigger: time
+    at: !input heure_stats
+    id: stats_quotidiennes
+
 conditions: []
 
 actions:
@@ -473,6 +518,95 @@ actions:
                   message: "Filtration arretee. Chauffage actif, le power reste allume."
 
       # ══════════════════════════════════════════
+      # BULLES OFF — cycle bonus si hors plage
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: bulles_off
+          - condition: template
+            value_template: "{{ v_bonus_hors_plage_actif and v_mode in ['Automatique', 'Eco'] }}"
+          - condition: state
+            entity_id: input_boolean.spa_stoppe
+            state: "off"
+          - condition: state
+            entity_id: input_boolean.spa_recovery_running
+            state: "off"
+          # Uniquement si on est HORS plage (dans la plage, la boucle principale gere le bonus)
+          - condition: template
+            value_template: "{{ not v_dans_plage }}"
+        sequence:
+          - variables:
+              air_time_bonus: >-
+                {% set diff = (states(v_air_time) | float(0) - states('input_number.spa_snapshot_air_time') | float(0)) * 60 %}
+                {{ 0 if diff < 0 or diff > 1440 else diff | round(0) | int }}
+              duree_bonus_hors_plage: >-
+                {% if air_time_bonus | int >= v_seuil_bonus %}
+                  {{ v_bonus_long | int }}
+                {% elif air_time_bonus | int >= v_seuil_bonus_court %}
+                  {{ v_bonus_court | int }}
+                {% else %}
+                  0
+                {% endif %}
+
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ duree_bonus_hors_plage | int > 0 }}"
+                sequence:
+                  - action: notify.persistent_notification
+                    data:
+                      title: "SPA — Cycle bonus hors plage"
+                      message: >-
+                        Bulles utilisees {{ air_time_bonus }} min hors plage horaire.
+                        Cycle de filtration bonus : {{ duree_bonus_hors_plage }} min.
+                  - choose:
+                      - conditions:
+                          - condition: state
+                            entity_id: !input switch_power
+                            state: "off"
+                        sequence:
+                          - action: homeassistant.turn_on
+                            target:
+                              entity_id: !input switch_power
+                          - delay:
+                              seconds: 3
+                  - action: homeassistant.turn_on
+                    target:
+                      entity_id: !input switch_pompe
+                  - action: input_select.select_option
+                    target:
+                      entity_id: input_select.spa_state
+                    data:
+                      option: "bonus"
+                  - delay:
+                      minutes: "{{ duree_bonus_hors_plage | int }}"
+                  - action: input_select.select_option
+                    target:
+                      entity_id: input_select.spa_state
+                    data:
+                      option: "idle"
+                  - variables:
+                      skip_coupure_bonus: >-
+                        {{ states(v_chauffage_bin) == 'on' or states(v_bulles) == 'on' }}
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ not skip_coupure_bonus and v_autoriser_ext }}"
+                        sequence:
+                          - action: homeassistant.turn_off
+                            target:
+                              entity_id: !input switch_pompe
+                          - delay:
+                              seconds: 5
+                          - action: homeassistant.turn_off
+                            target:
+                              entity_id: !input switch_power
+                  - action: notify.persistent_notification
+                    data:
+                      title: "SPA — Cycle bonus hors plage termine"
+                      message: "Filtration bonus de {{ duree_bonus_hors_plage }} min terminee."
+
+      # ══════════════════════════════════════════
       # POWER ON — snapshot de secours UNIQUEMENT
       # Ne s execute PAS si HA vient de redemarrer
       # (ha_reboot_pending protege le snapshot existant)
@@ -487,11 +621,12 @@ actions:
             entity_id: input_boolean.spa_recovery_running
             state: "off"
           # Bloquer si HA vient juste de redémarrer (fenêtre de 120 secondes)
+          # Bloquer si HA vient de redemarrer : spa_recovery_running est deja ON
+          # (pose immediatement par ha_start avant son delai de 30s)
+          # La condition as_timestamp sur homeassistant.start_time est supprimee
+          # car elle causait ValueError sur certaines versions de HA (start_time=None).
           - condition: template
-            value_template: >-
-              {{ (as_timestamp(now()) - as_timestamp(states.homeassistant.start_time | default(now()))) > 120
-                 if states.homeassistant is defined
-                 else true }}
+            value_template: "{{ true }}" 
         sequence:
           - action: input_number.set_value
             target:
@@ -927,6 +1062,65 @@ actions:
                 data:
                   title: "SPA — Connexion retablie"
                   message: "Objectif atteint ou hors plage horaire. Aucun rattrapage necessaire."
+
+      # ══════════════════════════════════════════
+      # STATISTIQUES QUOTIDIENNES
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: stats_quotidiennes
+          - condition: template
+            value_template: "{{ v_notifications_stats }}"
+        sequence:
+          - variables:
+              # Minutes pompees aujourd hui (depuis snapshot ou depuis 0h)
+              stats_pump_minutes: >-
+                {% set snap = states('input_number.spa_snapshot_pump_time') | float(0) %}
+                {% set cur = states(v_pump_time) | float(0) %}
+                {% set diff = (cur - snap) * 60 %}
+                {{ [diff | round(0) | int, 0] | max }}
+              stats_pump_h: "{{ (stats_pump_minutes | int // 60) }}"
+              stats_pump_m: "{{ (stats_pump_minutes | int % 60) }}"
+              # Minutes bulles aujourd hui
+              stats_air_minutes: >-
+                {% set snap = states('input_number.spa_snapshot_air_time') | float(0) %}
+                {% set cur = states(v_air_time) | float(0) %}
+                {% set diff = (cur - snap) * 60 %}
+                {{ [diff | round(0) | int, 0] | max }}
+              stats_air_h: "{{ (stats_air_minutes | int // 60) }}"
+              stats_air_m: "{{ (stats_air_minutes | int % 60) }}"
+              # Temperature actuelle
+              stats_temp: >-
+                {% set t = states(v_temp) %}
+                {{ 'N/A' if t in ['unknown', 'unavailable'] else t ~ '°C' }}
+              # Objectif de la session
+              stats_objectif: "{{ states('input_number.spa_duree_objectif') | int(0) }}"
+              stats_objectif_h: "{{ stats_objectif | int // 60 }}"
+              stats_objectif_m: "{{ stats_objectif | int % 60 }}"
+              # Cycle en cours
+              stats_cycle: "{{ states('input_number.spa_cycle_en_cours') | int(0) }}"
+              # Connexion
+              stats_connexion: >-
+                {{ 'Connecte' if states(v_connexion) == 'on' else 'Hors ligne' }}
+              # Chauffage actif en ce moment
+              stats_chauffage: >-
+                {{ 'Actif' if states(v_chauffage_bin) == 'on' else 'Inactif' }}
+              # Mode
+              stats_mode: "{{ v_mode }}"
+
+          - action: notify.persistent_notification
+            data:
+              title: "SPA — Bilan du jour"
+              message: >-
+                Bilan de filtration du {{ now().strftime('%d/%m/%Y') }}
+
+                Filtration : {{ stats_pump_h }}h{{ '%02d' | format(stats_pump_m | int) }} (objectif {{ stats_objectif_h }}h{{ '%02d' | format(stats_objectif_m | int) }})
+                Bulles : {{ stats_air_h }}h{{ '%02d' | format(stats_air_m | int) }}
+                Temperature eau : {{ stats_temp }}
+                Mode : {{ stats_mode }}
+                Chauffage : {{ stats_chauffage }}
+                Connexion : {{ stats_connexion }}
+                Cycles effectues : {{ stats_cycle }} / {{ v_nb_cycles }}
 
       # ══════════════════════════════════════════
       # RESET MANUEL
@@ -1379,7 +1573,9 @@ actions:
                                         - choose:
                                             - conditions:
                                                 - condition: template
-                                                  value_template: "{{ minutes_reelles | int > seuil_watchdog | int }}"
+                                                  value_template: >-
+                                                    {{ minutes_reelles | int > seuil_watchdog | int
+                                                       and states(v_chauffage_bin) != 'on' }}
                                               sequence:
                                                 - action: notify.persistent_notification
                                                   data:
@@ -1396,6 +1592,19 @@ actions:
                                                 - action: homeassistant.turn_off
                                                   target:
                                                     entity_id: !input switch_power
+                                            - conditions:
+                                                - condition: template
+                                                  value_template: >-
+                                                    {{ minutes_reelles | int > seuil_watchdog | int
+                                                       and states(v_chauffage_bin) == 'on' }}
+                                              sequence:
+                                                - action: notify.persistent_notification
+                                                  data:
+                                                    title: "SPA — Watchdog : pompe longue (chauffage actif)"
+                                                    message: >-
+                                                      Pompe active {{ minutes_reelles }} min
+                                                      (seuil {{ seuil_watchdog }} min).
+                                                      Chauffage actif : aucune coupure effectuee.
 
                           # CYCLE INTERMEDIAIRE
                           default:
