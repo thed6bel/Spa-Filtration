@@ -1449,8 +1449,8 @@ actions:
                               {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
                               {{ [diff | round(0) | int, 0] | max }}
 
+                        # BYPASS : chauffage actif + pompe deja en marche
                         - choose:
-                            # ── BYPASS : chauffage actif + pompe deja en marche ──
                             - conditions:
                                 - condition: template
                                   value_template: "{{ bypass_cycle }}"
@@ -1458,11 +1458,7 @@ actions:
                                 - action: "{{ v_notify_service }}"
                                   data:
                                     title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} bypasse"
-                                    message: >-
-                                      Chauffage actif et pompe en marche depuis
-                                      {{ pompe_minutes_actives }} min.
-                                      Cycle de filtration bypasse, la pompe continue de tourner.
-                                      Reprise du planning au prochain cycle.
+                                    message: "Chauffage actif, pompe en marche depuis {{ pompe_minutes_actives }} min. Cycle bypasse, pompe continue. Reprise au prochain cycle."
                                 - action: input_select.select_option
                                   target:
                                     entity_id: input_select.spa_state
@@ -1471,48 +1467,48 @@ actions:
                                 - delay:
                                     minutes: "{{ duree_ce_cycle | int }}"
 
-                            # ── CYCLE NORMAL ──
-                            default:
-                              - choose:
-                                  - conditions:
-                                      - condition: template
-                                        value_template: "{{ v_notifications_debug }}"
-                                    sequence:
-                                      - action: "{{ v_notify_service }}"
-                                        data:
-                                          title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} demarre"
-                                          message: "Duree : {{ duree_ce_cycle }} min. Objectif session : {{ duree_totale_cycle }} min ({{ minutes_filtrees_cycle }} min deja filtrees). Temperature : {{ temp_actuelle }}°C{% if temp_capteur_ko %} (capteur KO — securite){% endif %}.{% if bonus_minutes | int > 0 %} Bonus bulles actif : +{{ bonus_minutes }} min.{% endif %}"
-
-                              # Demarrage physique
-                              - choose:
-                                  - conditions:
-                                      - condition: state
-                                        entity_id: !input switch_power
-                                        state: "off"
-                                    sequence:
-                                      - action: homeassistant.turn_on
-                                        target:
+                        # CYCLE NORMAL : pas de bypass
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: "{{ not bypass_cycle }}"
+                              sequence:
+                                - choose:
+                                    - conditions:
+                                        - condition: template
+                                          value_template: "{{ v_notifications_debug }}"
+                                      sequence:
+                                        - action: "{{ v_notify_service }}"
+                                          data:
+                                            title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} demarre"
+                                            message: "Duree : {{ duree_ce_cycle }} min. Objectif : {{ duree_totale_cycle }} min ({{ minutes_filtrees_cycle }} min filtrees). Temp : {{ temp_actuelle }}°C."
+                                - choose:
+                                    - conditions:
+                                        - condition: state
                                           entity_id: !input switch_power
-                                      - delay:
-                                          seconds: 3
-                              - choose:
-                                  - conditions:
-                                      - condition: state
-                                        entity_id: !input switch_pompe
-                                        state: "off"
-                                    sequence:
-                                      - action: homeassistant.turn_on
-                                        target:
+                                          state: "off"
+                                      sequence:
+                                        - action: homeassistant.turn_on
+                                          target:
+                                            entity_id: !input switch_power
+                                        - delay:
+                                            seconds: 3
+                                - choose:
+                                    - conditions:
+                                        - condition: state
                                           entity_id: !input switch_pompe
-
-                              - action: input_select.select_option
-                                target:
-                                  entity_id: input_select.spa_state
-                                data:
-                                  option: "filtering"
-
-                              - delay:
-                                  minutes: "{{ duree_ce_cycle | int }}"
+                                          state: "off"
+                                      sequence:
+                                        - action: homeassistant.turn_on
+                                          target:
+                                            entity_id: !input switch_pompe
+                                - action: input_select.select_option
+                                  target:
+                                    entity_id: input_select.spa_state
+                                  data:
+                                    option: "filtering"
+                                - delay:
+                                    minutes: "{{ duree_ce_cycle | int }}"
 
                         - action: input_select.select_option
                           target:
