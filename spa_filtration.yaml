@@ -1,51 +1,21 @@
 blueprint:
-  name: "Gestion filtration SPA Bestway Lay-Z-SPA v2"
+  name: "Gestion filtration SPA Bestway Lay-Z-SPA v2.9.1"
   description: >-
     Gestion automatique filtration SPA Bestway Lay-Z-SPA.
     Duree adaptee a la temperature, bonus bulles, cycles multiples,
     plage nocturne, skip coupure si chauffage actif, watchdog securite.
     Blueprint compagnon spa_bulles_auto_off.yaml requis pour coupure bulles auto.
 
-    Corrections v2.7.7
-    - Recovery apres reboot : au lieu d un seul bloc "rattrapage",
-      recalcul des cycles restants (via spa_cycle_en_cours) et repartition
-      des minutes restantes sur ces cycles avec intervalles proportionnels.
-      Exemple : 2 cycles restants sur 60 min objectif, 30 min filtrees
-      2 cycles de 15 min chacun avec intervalle calcule sur la plage restante.
-    - Recalcul en temps reel au debut de chaque cycle de rattrapage pour
-      absorber les ecarts (comme la boucle principale).
-
-    Corrections v2.8.0
-    - ha_start pose spa_recovery_running=ON immediatement (avant le delai de 30s)
-      pour bloquer le trigger power_on qui se declenche en meme temps au reboot
-      et qui ecrasait le snapshot existant (bug : minutes_filtrees = 0).
-    - power_on : condition supplementaire fenetre 120s apres demarrage HA
-      comme filet de securite supplementaire.
-
-    Corrections v2.8.1
-    - Condition entree recovery changee de restant >= v_duree_min a restant > 0.
-      Bug : 14 min restantes avec duree_min=15 declenchait "objectif deja atteint"
-      alors que duree_par_cycle_reboot applique deja le minimum via | max v_duree_min.
-
-    Corrections v2.8.2
-    - Recovery : coupure finale conditionnelle (comme boucle principale).
-      Bug : le blueprint coupait pompe et power inconditionnellement en fin de recovery,
-      sans verifier si le chauffage ou les bulles etaient actifs (variable skip_coupure
-      inexistante dans le recovery). Ajout de skip_coupure_reboot avant la coupure finale.
-
-    Corrections v2.9.0
-    - power_on : suppression condition as_timestamp(homeassistant.start_time) qui
-      causait ValueError (start_time=None) sur certaines versions HA. Le verrou
-      spa_recovery_running pose par ha_start suffit a bloquer power_on au reboot.
-    - Watchdog : ne coupe plus la pompe si le chauffage est actif. Envoie une
-      notification d alerte a la place (pompe necessaire pour chauffer l eau).
-    - Watchdog : marge max augmentee de 180 a 720 min pour supporter les sessions
-      de chauffage longues (peut tourner 12h+ sans probleme).
-    - NOUVEAU : cycle bonus bulles hors plage horaire. Si les bulles sont utilisees
-      en dehors de la plage de filtration, un cycle bonus independant est lance
-      apres leur arret (configurable, actif par defaut).
-    - NOUVEAU : notification de statistiques quotidiennes a heure configurable.
-      Bilan : filtration totale, bulles, temperature, mode, cycles, connexion.
+    Corrections v2.9.1
+    - NOUVEAU : service de notification configurable. Toutes les notifications
+      passent par le service configure (notify.persistent_notification par defaut).
+      Supporte : notify.mobile_app_*, notify.pushover, notify.telegram_bot, etc.
+    - Bypass cycle si chauffage actif et pompe deja en marche. Au lieu de lancer
+      un nouveau cycle par-dessus une pompe deja active pour le chauffage, le
+      blueprint attend la duree du cycle (preservant le planning) et envoie une
+      notification "cycle bypasse". La pompe continue de tourner sans interruption.
+      Au prochain cycle, re-evaluation : bypass si toujours en chauffe, sinon
+      filtration normale. Etat spa_state passe a "heating" pendant le bypass.
 
   domain: automation
   homeassistant:
@@ -330,6 +300,17 @@ blueprint:
               unit_of_measurement: min
               mode: slider
 
+        notify_service:
+          name: "Service de notification"
+          description: >-
+            Service utilise pour toutes les notifications du blueprint.
+            Exemples : notify.persistent_notification (defaut HA),
+            notify.mobile_app_mon_telephone, notify.pushover, notify.telegram_bot.
+            Entrez le nom complet du service.
+          default: "notify.persistent_notification"
+          selector:
+            text:
+
         notifications_debug:
           name: "Activer les notifications de cycle (mode debug)"
           description: >-
@@ -507,12 +488,12 @@ actions:
                   - action: homeassistant.turn_off
                     target:
                       entity_id: !input switch_power
-                  - action: notify.persistent_notification
+                  - action: "{{ v_notify_service }}"
                     data:
                       title: "SPA — Filtration arretee"
                       message: "Filtration arretee manuellement. Appuyez sur Reset pour relancer."
             default:
-              - action: notify.persistent_notification
+              - action: "{{ v_notify_service }}"
                 data:
                   title: "SPA — Filtration arretee (chauffage actif)"
                   message: "Filtration arretee. Chauffage actif, le power reste allume."
@@ -553,7 +534,7 @@ actions:
                   - condition: template
                     value_template: "{{ duree_bonus_hors_plage | int > 0 }}"
                 sequence:
-                  - action: notify.persistent_notification
+                  - action: "{{ v_notify_service }}"
                     data:
                       title: "SPA — Cycle bonus hors plage"
                       message: >-
@@ -601,7 +582,7 @@ actions:
                           - action: homeassistant.turn_off
                             target:
                               entity_id: !input switch_power
-                  - action: notify.persistent_notification
+                  - action: "{{ v_notify_service }}"
                     data:
                       title: "SPA — Cycle bonus hors plage termine"
                       message: "Filtration bonus de {{ duree_bonus_hors_plage }} min terminee."
@@ -736,7 +717,7 @@ actions:
                           - condition: template
                             value_template: "{{ restant_reboot | int > 0 }}"
                         sequence:
-                          - action: notify.persistent_notification
+                          - action: "{{ v_notify_service }}"
                             data:
                               title: "SPA — Reprise apres reboot"
                               message: >-
@@ -790,7 +771,7 @@ actions:
                                         - condition: template
                                           value_template: "{{ not dans_plage_now_reboot }}"
                                       sequence:
-                                        - action: notify.persistent_notification
+                                        - action: "{{ v_notify_service }}"
                                           data:
                                             title: "SPA — Recovery : hors plage"
                                             message: "Hors plage horaire pendant le rattrapage. Arret."
@@ -801,13 +782,13 @@ actions:
                                         - condition: template
                                           value_template: "{{ duree_ce_cycle_reboot | int <= 0 }}"
                                       sequence:
-                                        - action: notify.persistent_notification
+                                        - action: "{{ v_notify_service }}"
                                           data:
                                             title: "SPA — Recovery : objectif atteint"
                                             message: "Objectif de filtration atteint pendant le rattrapage."
                                         - stop: "Objectif atteint pendant recovery"
 
-                                - action: notify.persistent_notification
+                                - action: "{{ v_notify_service }}"
                                   data:
                                     title: "SPA — Recovery cycle {{ repeat.index }}/{{ cycles_restants_reboot }}"
                                     message: >-
@@ -886,7 +867,7 @@ actions:
                                   - condition: template
                                     value_template: "{{ skip_coupure_reboot }}"
                                 sequence:
-                                  - action: notify.persistent_notification
+                                  - action: "{{ v_notify_service }}"
                                     data:
                                       title: "SPA — Rattrapage reboot termine (SPA maintenu)"
                                       message: >-
@@ -905,12 +886,12 @@ actions:
                                   - action: homeassistant.turn_off
                                     target:
                                       entity_id: !input switch_power
-                                  - action: notify.persistent_notification
+                                  - action: "{{ v_notify_service }}"
                                     data:
                                       title: "SPA — Rattrapage reboot termine"
                                       message: "Tous les cycles de rattrapage sont termines. SPA coupe proprement."
                             default:
-                              - action: notify.persistent_notification
+                              - action: "{{ v_notify_service }}"
                                 data:
                                   title: "SPA — Rattrapage reboot termine (SPA maintenu)"
                                   message: "Cycles termines. Extinction non autorisee : SPA reste allume."
@@ -926,7 +907,7 @@ actions:
 
                     default:
                       # Objectif deja atteint ou presque → on ne relance pas
-                      - action: notify.persistent_notification
+                      - action: "{{ v_notify_service }}"
                         data:
                           title: "SPA — Reboot : objectif deja atteint"
                           message: >-
@@ -962,7 +943,7 @@ actions:
           - condition: trigger
             id: connexion_perdue
         sequence:
-          - action: notify.persistent_notification
+          - action: "{{ v_notify_service }}"
             data:
               title: "SPA — Connexion WiFi perdue"
               message: >-
@@ -1024,7 +1005,7 @@ actions:
                   - condition: template
                     value_template: "{{ minutes_restantes_retour | int > 0 and dans_plage_retour }}"
                 sequence:
-                  - action: notify.persistent_notification
+                  - action: "{{ v_notify_service }}"
                     data:
                       title: "SPA — Connexion retablie"
                       message: "Il reste {{ minutes_restantes_retour }} min a filtrer. Cycle de rattrapage en cours."
@@ -1058,7 +1039,7 @@ actions:
                             target:
                               entity_id: !input switch_power
             default:
-              - action: notify.persistent_notification
+              - action: "{{ v_notify_service }}"
                 data:
                   title: "SPA — Connexion retablie"
                   message: "Objectif atteint ou hors plage horaire. Aucun rattrapage necessaire."
@@ -1108,7 +1089,7 @@ actions:
               # Mode
               stats_mode: "{{ v_mode }}"
 
-          - action: notify.persistent_notification
+          - action: "{{ v_notify_service }}"
             data:
               title: "SPA — Bilan du jour"
               message: >-
@@ -1203,7 +1184,7 @@ actions:
                             entity_id: !input binary_connexion
                             state: "off"
                         sequence:
-                          - action: notify.persistent_notification
+                          - action: "{{ v_notify_service }}"
                             data:
                               title: "SPA — Impossible de demarrer"
                               message: "Le SPA est hors connexion. Verifiez l'ESP8266."
@@ -1223,7 +1204,7 @@ actions:
                               or states('input_select.spa_state') in ['unknown', 'unavailable']
                               or states('input_boolean.spa_recovery_running') in ['unknown', 'unavailable'] }}
                         sequence:
-                          - action: notify.persistent_notification
+                          - action: "{{ v_notify_service }}"
                             data:
                               title: "SPA — Entites manquantes"
                               message: >-
@@ -1271,7 +1252,7 @@ actions:
                                   entity_id: !input binary_connexion
                                   state: "off"
                               sequence:
-                                - action: notify.persistent_notification
+                                - action: "{{ v_notify_service }}"
                                   data:
                                     title: "SPA — Connexion perdue"
                                     message: "Connexion perdue au cycle {{ repeat.index }} / {{ v_nb_cycles }}."
@@ -1361,7 +1342,7 @@ actions:
                                 - condition: template
                                   value_template: "{{ temp_capteur_ko }}"
                               sequence:
-                                - action: notify.persistent_notification
+                                - action: "{{ v_notify_service }}"
                                   data:
                                     title: "SPA — Capteur temperature indisponible"
                                     message: >-
@@ -1373,7 +1354,7 @@ actions:
                                 - condition: template
                                   value_template: "{{ depasse_heure_fin }}"
                               sequence:
-                                - action: notify.persistent_notification
+                                - action: "{{ v_notify_service }}"
                                   data:
                                     title: "SPA — Cycle annule"
                                     message: "Le cycle {{ repeat.index }}/{{ v_nb_cycles }} depasserait l'heure de fin."
@@ -1384,7 +1365,7 @@ actions:
                                 - condition: template
                                   value_template: "{{ duree_ce_cycle | int <= 0 }}"
                               sequence:
-                                - action: notify.persistent_notification
+                                - action: "{{ v_notify_service }}"
                                   data:
                                     title: "SPA — Filtration terminee"
                                     message: "Objectif atteint ({{ minutes_filtrees_cycle }}/{{ duree_totale_cycle }} min)."
@@ -1414,52 +1395,89 @@ actions:
                                     entity_id: input_boolean.spa_snapshot_fait
                                 - stop: "Objectif atteint"
 
+                        # Bypass si chauffage actif et pompe deja en marche
+                        - variables:
+                            pompe_deja_active: >-
+                              {{ states(v_pompe) == 'on' }}
+                            chauffage_en_cours: >-
+                              {{ states(v_chauffage_bin) == 'on' }}
+                            bypass_cycle: >-
+                              {{ chauffage_en_cours and pompe_deja_active }}
+                            # Depuis combien de minutes la pompe tourne-t-elle (approx)
+                            pompe_minutes_actives: >-
+                              {% set diff = (states(v_pump_time) | float(0) - states('input_number.spa_snapshot_pump_time') | float(0)) * 60 %}
+                              {{ [diff | round(0) | int, 0] | max }}
+
                         - choose:
+                            # ── BYPASS : chauffage actif + pompe deja en marche ──
                             - conditions:
                                 - condition: template
-                                  value_template: "{{ v_notifications_debug }}"
+                                  value_template: "{{ bypass_cycle }}"
                               sequence:
-                                - action: notify.persistent_notification
+                                - action: "{{ v_notify_service }}"
                                   data:
-                                    title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} demarre"
+                                    title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} bypasse"
                                     message: >-
-                                      Duree : {{ duree_ce_cycle }} min.
-                                      Objectif session : {{ duree_totale_cycle }} min
-                                      ({{ minutes_filtrees_cycle }} min deja filtrees).
-                                      Temperature : {{ temp_actuelle }}°C
-                                      {% if temp_capteur_ko %}(capteur KO — securite){% endif %}.
-                                      {% if bonus_minutes | int > 0 %}Bonus bulles actif : +{{ bonus_minutes }} min.{% endif %}
-
-                        # Demarrage physique
-                        - choose:
-                            - conditions:
-                                - condition: state
-                                  entity_id: !input switch_power
-                                  state: "off"
-                              sequence:
-                                - action: homeassistant.turn_on
+                                      Chauffage actif et pompe en marche depuis
+                                      {{ pompe_minutes_actives }} min.
+                                      Cycle de filtration bypasse, la pompe continue de tourner.
+                                      Reprise du planning au prochain cycle.
+                                - action: input_select.select_option
                                   target:
-                                    entity_id: !input switch_power
+                                    entity_id: input_select.spa_state
+                                  data:
+                                    option: "heating"
                                 - delay:
-                                    seconds: 3
-                        - choose:
-                            - conditions:
-                                - condition: state
-                                  entity_id: !input switch_pompe
-                                  state: "off"
-                              sequence:
-                                - action: homeassistant.turn_on
-                                  target:
-                                    entity_id: !input switch_pompe
+                                    minutes: "{{ duree_ce_cycle | int }}"
 
-                        - action: input_select.select_option
-                          target:
-                            entity_id: input_select.spa_state
-                          data:
-                            option: "filtering"
+                            # ── CYCLE NORMAL ──
+                            default:
+                              - choose:
+                                  - conditions:
+                                      - condition: template
+                                        value_template: "{{ v_notifications_debug }}"
+                                    sequence:
+                                      - action: "{{ v_notify_service }}"
+                                        data:
+                                          title: "SPA — Cycle {{ repeat.index }}/{{ v_nb_cycles }} demarre"
+                                          message: >-
+                                            Duree : {{ duree_ce_cycle }} min.
+                                            Objectif session : {{ duree_totale_cycle }} min
+                                            ({{ minutes_filtrees_cycle }} min deja filtrees).
+                                            Temperature : {{ temp_actuelle }}°C
+                                            {% if temp_capteur_ko %}(capteur KO — securite){% endif %}.
+                                            {% if bonus_minutes | int > 0 %}Bonus bulles actif : +{{ bonus_minutes }} min.{% endif %}
 
-                        - delay:
-                            minutes: "{{ duree_ce_cycle | int }}"
+                              # Demarrage physique
+                              - choose:
+                                  - conditions:
+                                      - condition: state
+                                        entity_id: !input switch_power
+                                        state: "off"
+                                    sequence:
+                                      - action: homeassistant.turn_on
+                                        target:
+                                          entity_id: !input switch_power
+                                      - delay:
+                                          seconds: 3
+                              - choose:
+                                  - conditions:
+                                      - condition: state
+                                        entity_id: !input switch_pompe
+                                        state: "off"
+                                    sequence:
+                                      - action: homeassistant.turn_on
+                                        target:
+                                          entity_id: !input switch_pompe
+
+                              - action: input_select.select_option
+                                target:
+                                  entity_id: input_select.spa_state
+                                data:
+                                  option: "filtering"
+
+                              - delay:
+                                  minutes: "{{ duree_ce_cycle | int }}"
 
                         - action: input_select.select_option
                           target:
@@ -1491,7 +1509,7 @@ actions:
                                         - condition: template
                                           value_template: "{{ bonus_minutes | int > 0 and bonus_restant | int > 0 and not skip_coupure }}"
                                       sequence:
-                                        - action: notify.persistent_notification
+                                        - action: "{{ v_notify_service }}"
                                           data:
                                             title: "SPA — Cycle bonus en cours"
                                             message: "Bulles utilisees ({{ air_time_minutes }} min). Cycle bonus de {{ bonus_restant }} min."
@@ -1519,7 +1537,7 @@ actions:
                                         - condition: template
                                           value_template: "{{ skip_coupure }}"
                                       sequence:
-                                        - action: notify.persistent_notification
+                                        - action: "{{ v_notify_service }}"
                                           data:
                                             title: "SPA — Filtration terminee, SPA maintenu"
                                             message: >-
@@ -1531,7 +1549,7 @@ actions:
                                         - condition: template
                                           value_template: "{{ v_autoriser_ext }}"
                                       sequence:
-                                        - action: notify.persistent_notification
+                                        - action: "{{ v_notify_service }}"
                                           data:
                                             title: "SPA — Session terminee"
                                             message: >-
@@ -1548,7 +1566,7 @@ actions:
                                             entity_id: !input switch_power
 
                                   default:
-                                    - action: notify.persistent_notification
+                                    - action: "{{ v_notify_service }}"
                                       data:
                                         title: "SPA — Session terminee (SPA maintenu)"
                                         message: >-
@@ -1577,7 +1595,7 @@ actions:
                                                     {{ minutes_reelles | int > seuil_watchdog | int
                                                        and states(v_chauffage_bin) != 'on' }}
                                               sequence:
-                                                - action: notify.persistent_notification
+                                                - action: "{{ v_notify_service }}"
                                                   data:
                                                     title: "SPA — Watchdog : pompe anormalement longue"
                                                     message: >-
@@ -1598,7 +1616,7 @@ actions:
                                                     {{ minutes_reelles | int > seuil_watchdog | int
                                                        and states(v_chauffage_bin) == 'on' }}
                                               sequence:
-                                                - action: notify.persistent_notification
+                                                - action: "{{ v_notify_service }}"
                                                   data:
                                                     title: "SPA — Watchdog : pompe longue (chauffage actif)"
                                                     message: >-
