@@ -212,6 +212,18 @@ Toutes les modifications importantes de ce blueprint SPA sont documentées ici.
 
 ---
 
+## [2.9.1] 
+### Corrections v2.9.1
+- NOUVEAU : service de notification configurable. Toutes les notifications
+  passent par le service configure (notify.persistent_notification par defaut).
+  Supporte : notify.mobile_app_*, notify.pushover, notify.telegram_bot, etc.
+- Bypass cycle si chauffage actif et pompe deja en marche. Au lieu de lancer
+  un nouveau cycle par-dessus une pompe deja active pour le chauffage, le
+  blueprint attend la duree du cycle (preservant le planning) et envoie une
+  notification "cycle bypasse". La pompe continue de tourner sans interruption.
+  Au prochain cycle, re-evaluation : bypass si toujours en chauffe, sinon
+  filtration normale. Etat spa_state passe a "heating" pendant le bypass.
+
 ## [2.9.0] 
 ### Corrections v2.9.0
 - power_on : suppression condition as_timestamp(homeassistant.start_time) qui
