@@ -58,6 +58,19 @@ blueprint:
       Au prochain cycle, re-evaluation : bypass si toujours en chauffe, sinon
       filtration normale. Etat spa_state passe a "heating" pendant le bypass.
 
+    Corrections v2.9.2
+    - CRITIQUE : debut_cycle bloque par spa_snapshot_fait=on (etat fantome).
+      Le demarrage planifie remettait maintenant spa_snapshot_fait a off avant
+      de demarrer, plus besoin de reset manuel entre deux jours.
+    - CRITIQUE : pompe non arretee apres reset. Le reset coupe maintenant
+      physiquement la pompe et le power (sauf si chauffage actif) avant de
+      remettre les etats a zero. Aussi remet spa_duree_objectif a 0.
+    - NOUVEAU : watchdog autonome toutes les heures (trigger time_pattern /1h).
+      Si la pompe tourne sans session active et depasse le seuil, elle est coupee
+      automatiquement meme si la boucle principale n a jamais demarre.
+    - debut_cycle : ajout condition recovery_running=off pour eviter conflit
+      avec un recovery en cours.
+
   domain: automation
   homeassistant:
     min_version: 2024.8.0
@@ -490,6 +503,11 @@ triggers:
   - trigger: time
     at: !input heure_stats
     id: stats_quotidiennes
+
+  # Watchdog autonome : verifie toutes les heures si la pompe tourne anormalement
+  - trigger: time_pattern
+    hours: "/1"
+    id: watchdog_horaire
 
 conditions: []
 
@@ -1151,6 +1169,31 @@ actions:
           - condition: trigger
             id: reset_manuel
         sequence:
+          # Couper la pompe et le power si allumes
+          - choose:
+              - conditions:
+                  - condition: state
+                    entity_id: !input switch_pompe
+                    state: "on"
+                sequence:
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: !input switch_pompe
+                  - delay:
+                      seconds: 3
+          - choose:
+              - conditions:
+                  - condition: state
+                    entity_id: !input switch_power
+                    state: "on"
+                  - condition: state
+                    entity_id: !input binary_chauffage_actif
+                    state: "off"
+                sequence:
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: !input switch_power
+          # Remise a zero de tous les etats internes
           - action: input_number.set_value
             target:
               entity_id: input_number.spa_bonus_minutes
@@ -1159,6 +1202,11 @@ actions:
           - action: input_number.set_value
             target:
               entity_id: input_number.spa_cycle_en_cours
+            data:
+              value: 0
+          - action: input_number.set_value
+            target:
+              entity_id: input_number.spa_duree_objectif
             data:
               value: 0
           - action: input_boolean.turn_off
@@ -1175,6 +1223,76 @@ actions:
               entity_id: input_select.spa_state
             data:
               option: "idle"
+          - action: "{{ v_notify_service }}"
+            data:
+              title: "SPA — Reset effectue"
+              message: "Remise a zero complete. Pompe coupee. Prochain cycle au demarrage planifie."
+
+      # ══════════════════════════════════════════
+      # WATCHDOG AUTONOME — toutes les heures
+      # Coupe la pompe si elle tourne depuis trop longtemps
+      # sans qu une session soit active (etat fantome)
+      # ══════════════════════════════════════════
+      - conditions:
+          - condition: trigger
+            id: watchdog_horaire
+          - condition: template
+            value_template: "{{ v_watchdog_actif }}"
+          - condition: state
+            entity_id: !input switch_pompe
+            state: "on"
+        sequence:
+          - variables:
+              wd_minutes_pompe: >-
+                {% set snap = states('input_number.spa_snapshot_pump_time') | float(0) %}
+                {% set cur = states(v_pump_time) | float(0) %}
+                {% set diff = (cur - snap) * 60 %}
+                {{ [diff | round(0) | int, 0] | max }}
+              wd_seuil: >-
+                {{ v_plage_minutes | int + v_watchdog_marge | int }}
+              wd_chauffage: >-
+                {{ states(v_chauffage_bin) == 'on' }}
+              wd_session_active: >-
+                {{ states('input_boolean.spa_snapshot_fait') == 'on' }}
+
+          - choose:
+              # Pompe trop longue, pas de chauffage, pas de session active → couper
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ wd_minutes_pompe | int > wd_seuil | int
+                         and not wd_chauffage
+                         and not wd_session_active }}
+                sequence:
+                  - action: "{{ v_notify_service }}"
+                    data:
+                      title: "SPA — Watchdog autonome : coupure"
+                      message: >-
+                        Pompe active {{ wd_minutes_pompe }} min (seuil {{ wd_seuil }} min)
+                        sans session active. Coupure de securite.
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: !input switch_pompe
+                  - delay:
+                      seconds: 5
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: !input switch_power
+                  - action: input_boolean.turn_off
+                    target:
+                      entity_id: input_boolean.spa_snapshot_fait
+              # Pompe longue mais chauffage actif → juste une alerte
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ wd_minutes_pompe | int > wd_seuil | int and wd_chauffage }}
+                sequence:
+                  - action: "{{ v_notify_service }}"
+                    data:
+                      title: "SPA — Watchdog : pompe longue (chauffage actif)"
+                      message: >-
+                        Pompe active {{ wd_minutes_pompe }} min (seuil {{ wd_seuil }} min).
+                        Chauffage actif : aucune coupure.
 
       # ══════════════════════════════════════════
       # BOUCLE PRINCIPALE — debut_cycle uniquement
@@ -1185,7 +1303,20 @@ actions:
           - condition: state
             entity_id: input_boolean.spa_stoppe
             state: "off"
+          - condition: state
+            entity_id: input_boolean.spa_recovery_running
+            state: "off"
         sequence:
+          # Forcer la remise a zero du snapshot au demarrage planifie.
+          # Si spa_snapshot_fait est reste a ON (etat fantome apres reset ou reboot),
+          # cela bloquait le snapshot et donc toute la session. On le remet a off
+          # systematiquement ici : debut_cycle repart toujours de zero.
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.spa_snapshot_fait
+          - delay:
+              seconds: 2
+
           - choose:
 
               - conditions:
