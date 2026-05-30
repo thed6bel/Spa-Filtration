@@ -360,10 +360,11 @@ blueprint:
             Service utilise pour toutes les notifications du blueprint.
             Exemples : notify.persistent_notification (defaut HA),
             notify.mobile_app_mon_telephone, notify.pushover, notify.telegram_bot.
-            Entrez le nom complet du service.
+            Laisser vide pour utiliser notify.persistent_notification par defaut.
           default: "notify.persistent_notification"
           selector:
             text:
+              multiline: false
 
         notifications_debug:
           name: "Activer les notifications de cycle (mode debug)"
@@ -434,6 +435,13 @@ variables:
   v_watchdog_actif:      !input watchdog_actif
   v_watchdog_marge:      !input watchdog_marge
   v_notifications_debug: !input notifications_debug
+  v_notifications_stats:    !input notifications_stats
+  v_bonus_hors_plage_actif: !input bonus_hors_plage_actif
+  v_notify_service_input:   !input notify_service
+  # Si l input notify_service est vide, fallback sur persistent_notification
+  v_notify_service: >-
+    {%- set s = v_notify_service_input | default('') | string | trim -%}
+    {{ s if s != '' else 'notify.persistent_notification' }}
 
   v_snapshot_pump: "input_number.spa_snapshot_pump_time"
   v_snapshot_air:  "input_number.spa_snapshot_air_time"
