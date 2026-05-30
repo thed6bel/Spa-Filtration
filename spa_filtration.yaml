@@ -1,5 +1,5 @@
 blueprint:
-  name: "Gestion filtration SPA Bestway Lay-Z-SPA v2.9.1"
+  name: "Gestion filtration SPA Bestway Lay-Z-SPA v2"
   description: >-
     Gestion automatique filtration SPA Bestway Lay-Z-SPA.
     Duree adaptee a la temperature, bonus bulles, cycles multiples,
